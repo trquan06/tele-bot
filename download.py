@@ -147,11 +147,7 @@ async def download_from_url(message, url):
             await message.reply(error_report)
 
 async def download_with_progress(message, media_type, retry=False, max_retries=3, retry_delay=2):
-    """
-    Downloads media attached in a Telegram message with progress and automatic retries.
-    Supported media_type: "ảnh" (photo), "video", or "file" (document).
-    Enhanced error handling now wraps socket errors.
-    """
+    global failed_files  # Declare at the very start of the function
     try:
         from config import BASE_DOWNLOAD_FOLDER  # import here to avoid circular imports
         # Determine media and filename based on type
@@ -172,6 +168,7 @@ async def download_with_progress(message, media_type, retry=False, max_retries=3
             file_name = getattr(media, 'file_name', None) or f"file_{media.file_unique_id}"
 
         # Create a unique filename to avoid overwriting
+        import os, uuid
         base_name, ext = os.path.splitext(file_name)
         unique_name = f"{base_name}_{uuid.uuid4().hex[:8]}{ext}"
         file_path = os.path.join(BASE_DOWNLOAD_FOLDER, unique_name)
@@ -196,11 +193,12 @@ async def download_with_progress(message, media_type, retry=False, max_retries=3
                     # Verify download
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                         await status_message.edit_text(
-                            f"✅ {media_type.capitalize()} downloaded successfully!\nFile: {unique_name}\nSize: {os.path.getsize(file_path)} bytes"
+                            f"✅ {media_type.capitalize()} downloaded successfully!\n"
+                            f"File: {unique_name}\n"
+                            f"Size: {os.path.getsize(file_path)} bytes"
                         )
                         # Remove from failed_files if this was a retry
                         if retry:
-                            global failed_files
                             failed_files = [f for f in failed_files if f["file_path"] != file_path]
                         return True
                     raise ValueError("Downloaded file is invalid.")
@@ -214,7 +212,6 @@ async def download_with_progress(message, media_type, retry=False, max_retries=3
                         )
                         await asyncio.sleep(retry_delay)
                 except Exception as e:
-                    # This catches socket errors as well as others.
                     current_try += 1
                     if current_try < max_retries:
                         await status_message.edit_text(
@@ -230,7 +227,6 @@ async def download_with_progress(message, media_type, retry=False, max_retries=3
         error_msg = f"❌ Error downloading {media_type}: {str(e)}"
         print("Download error:", error_msg)
         if not retry:
-            global failed_files
             failed_files.append({
                 "file_path": file_path,
                 "message": message,
@@ -246,3 +242,4 @@ async def download_with_progress(message, media_type, retry=False, max_retries=3
         if os.path.exists(file_path):
             os.remove(file_path)
         return False
+
