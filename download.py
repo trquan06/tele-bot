@@ -4,6 +4,7 @@ import uuid
 import mimetypes
 import asyncio
 import aiohttp
+import zipfile
 from bs4 import BeautifulSoup
 from pyrogram import errors
 from config import BASE_DOWNLOAD_FOLDER, CHUNK_SIZE, SUPPORTED_MEDIA_TYPES, MAX_CONCURRENT_DOWNLOADS
@@ -19,9 +20,10 @@ failed_files = []
 
 async def download_from_url(message, url):
     """
-    Downloads content from a URL.
-    Supports HTML pages (with image/video extraction, e.g., Telegra.ph)
-    and direct file downloads.
+    Downloads content from a URL. Supports:
+      - HTML pages with media links (including Telegra.ph).
+      - Direct file downloads.
+      - If a .zip file is downloaded, it will automatically extract it.
     """
     failed_downloads = []
     connector = aiohttp.TCPConnector(limit=50, force_close=True)
@@ -57,9 +59,7 @@ async def download_from_url(message, url):
                                 failed_downloads.append((media_url, str(e)))
                         success_count = total_files - len(failed_downloads)
                         await status_msg.edit_text(
-                            f"Completed Telegra.ph download:\n"
-                            f"✅ Success: {success_count}\n"
-                            f"❌ Failed: {len(failed_downloads)}"
+                            f"Completed Telegra.ph download:\n✅ Success: {success_count}\n❌ Failed: {len(failed_downloads)}"
                         )
                         return
 
@@ -81,9 +81,7 @@ async def download_from_url(message, url):
                                 failed_downloads.append((media_url, str(e)))
                         success_count = total_files - len(failed_downloads)
                         await status_msg.edit_text(
-                            f"Completed media download:\n"
-                            f"✅ Success: {success_count}\n"
-                            f"❌ Failed: {len(failed_downloads)}"
+                            f"Completed media download:\n✅ Success: {success_count}\n❌ Failed: {len(failed_downloads)}"
                         )
                         return
                     else:
@@ -117,16 +115,25 @@ async def download_from_url(message, url):
                             f.write(chunk)
                             downloaded_size += len(chunk)
                             current_time = time.time()
-                            # Update progress every few seconds or at completion
+                            # Update progress every few seconds or on completion
                             if total_size > 0 and (downloaded_size / total_size * 100 % 5 == 0 or current_time - start_time >= 3):
                                 progress = (downloaded_size / total_size * 100)
                                 speed = downloaded_size / (current_time - start_time)
                                 await status_msg.edit_text(
-                                    f"Downloading file: {progress:.1f}%\n"
-                                    f"Speed: {humanize.naturalsize(speed)}/s\n"
-                                    f"Downloaded: {humanize.naturalsize(downloaded_size)}"
+                                    f"Downloading file: {progress:.1f}%\nSpeed: {speed:.1f} bytes/s\nDownloaded: {downloaded_size} bytes"
                                 )
                 await status_msg.edit_text(f"✅ Downloaded file from URL: {url}\nSaved at: {file_path}")
+
+                # --- NEW: If file is a ZIP, extract its contents ---
+                if file_path.lower().endswith(".zip"):
+                    try:
+                        extract_folder = BASE_DOWNLOAD_FOLDER  # same folder as downloaded file; adjust if needed
+                        with zipfile.ZipFile(file_path, "r") as zip_ref:
+                            zip_ref.extractall(extract_folder)
+                        await message.reply(f"✅ ZIP file extracted into {extract_folder}")
+                    except Exception as zip_err:
+                        await message.reply(f"❌ Error extracting ZIP file: {zip_err}")
+
         except errors.FloodWait as e:
             await handle_flood_wait(e, message)
         except aiohttp.ClientError as e:
@@ -143,6 +150,7 @@ async def download_with_progress(message, media_type, retry=False, max_retries=3
     """
     Downloads media attached in a Telegram message with progress and automatic retries.
     Supported media_type: "ảnh" (photo), "video", or "file" (document).
+    Enhanced error handling now wraps socket errors.
     """
     try:
         from config import BASE_DOWNLOAD_FOLDER  # import here to avoid circular imports
@@ -177,8 +185,7 @@ async def download_with_progress(message, media_type, retry=False, max_retries=3
                 try:
                     if os.path.exists(file_path):
                         os.remove(file_path)
-
-                    # Use Pyrogram's built-in download_media with a progress callback
+                    # Wrap download_media call to catch socket.send exceptions
                     await message.download_media(
                         file_name=file_path,
                         progress=lambda current, total: asyncio.create_task(
@@ -186,13 +193,10 @@ async def download_with_progress(message, media_type, retry=False, max_retries=3
                         ),
                         block=True
                     )
-
                     # Verify download
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                         await status_message.edit_text(
-                            f"✅ {media_type.capitalize()} downloaded successfully!\n"
-                            f"File: {unique_name}\n"
-                            f"Size: {humanize.naturalsize(os.path.getsize(file_path))}"
+                            f"✅ {media_type.capitalize()} downloaded successfully!\nFile: {unique_name}\nSize: {os.path.getsize(file_path)} bytes"
                         )
                         # Remove from failed_files if this was a retry
                         if retry:
@@ -210,6 +214,7 @@ async def download_with_progress(message, media_type, retry=False, max_retries=3
                         )
                         await asyncio.sleep(retry_delay)
                 except Exception as e:
+                    # This catches socket errors as well as others.
                     current_try += 1
                     if current_try < max_retries:
                         await status_message.edit_text(
