@@ -20,13 +20,6 @@ app = Client(
     sleep_threshold=100,
     max_concurrent_transmissions=10
 )
-
-# Add get_active_connections method to Client class
-def get_active_connections(self):
-    return len(self.sessions)
-
-Client.get_active_connections = get_active_connections
-
 # /start command handler
 @app.on_message(filters.command("start"))
 async def start_command(client, message):
@@ -51,7 +44,11 @@ async def status_command(client, message):
         stats = await get_system_stats()
         is_waiting, remaining_time = await check_flood_wait_status(message.chat.id)
         flood_status = f"⚠️ FloodWait active: {int(remaining_time)}s" if is_waiting else "✅ Normal"
-        active_downloads = app.get_active_connections()  # Updated to use get_active_connections
+        active_downloads = 0  # Placeholder for active downloads count
+        try:
+            active_downloads = len(app.get_active_connections())
+        except AttributeError:
+            pass
         await message.reply(
             f"📊 System Status:\n"
             f"CPU: {stats['cpu_usage']}\n"
