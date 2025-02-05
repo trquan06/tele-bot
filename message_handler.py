@@ -17,7 +17,8 @@ def log_message_info(message):
     print(f" - Has document: {bool(message.document)}")
     if message.text:
         print(f" - Text: {message.text}")
-
+    if message.forward_date:
+        print(f" - Forwarded from: {message.forward_from or message.forward_from_chat}")
 # Xử lý tin nhắn tự động (không cần download mode)
 @app.on_message(filters.private | filters.group)
 async def handle_message(client, message):
