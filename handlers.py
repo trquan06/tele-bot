@@ -23,7 +23,7 @@ app = Client(
 
 # Add get_active_connections method to Client class
 def get_active_connections(self):
-    return len(self._sessions)
+    return len(self.sessions)
 
 Client.get_active_connections = get_active_connections
 
