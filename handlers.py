@@ -172,3 +172,29 @@ async def retry_download_command(client, message):
         await handle_flood_wait(e, message)
     except Exception as e:
         await message.reply(f"Error during retry: {str(e)}")
+
+
+# New logic to detect and process forwarded messages for downloading media
+@app.on_message(filters.forwarded & (filters.photo | filters.video | filters.document))
+async def handle_forwarded_message(client, message):
+    global downloading
+    try:
+        if not downloading:
+            await message.reply("Download mode is not activated. Use /download to start.")
+            return
+
+        tasks = []
+        if message.photo:
+            tasks.append(download_with_progress(message, "ảnh"))
+        elif message.video:
+            tasks.append(download_with_progress(message, "video"))
+        elif message.document:
+            tasks.append(download_with_progress(message, "file"))
+
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    except errors.FloodWait as e:
+        await handle_flood_wait(e, message)
+    except Exception as e:
+        await message.reply(f"Error processing forwarded message: {str(e)}")
