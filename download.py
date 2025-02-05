@@ -183,7 +183,7 @@ async def download_with_progress(message, media_type, retry=False, max_retries=3
                     if os.path.exists(file_path):
                         os.remove(file_path)
                     # Wrap download_media call to catch socket.send exceptions
-                    await message.download_media(
+                    await message.download(
                         file_name=file_path,
                         progress=lambda current, total: asyncio.create_task(
                             progress_callback(current, total, status_message, start_time, media_type)
@@ -242,4 +242,3 @@ async def download_with_progress(message, media_type, retry=False, max_retries=3
         if os.path.exists(file_path):
             os.remove(file_path)
         return False
-
