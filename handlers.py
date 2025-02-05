@@ -4,7 +4,7 @@ from pyrogram import Client, filters, errors
 from config import API_ID, API_HASH, BOT_TOKEN
 from system_monitor import get_system_stats
 from download import download_from_url, download_with_progress, failed_files
-from upload import upload_to_google_photos
+from upload import upload_to_google_photos, retry_upload_command
 from flood_control import handle_flood_wait, check_flood_wait_status
 
 # Global state flags
@@ -116,6 +116,17 @@ async def upload_command(client, message):
     except Exception as e:
         await message.reply(f"Error during upload: {str(e)}")
         uploading = False
+
+# New /retry_upload command handler
+@app.on_message(filters.command("retry_upload"))
+async def retry_upload_handler(client, message):
+    try:
+        await retry_upload_command(client, message)
+    except errors.FloodWait as e:
+        await handle_flood_wait(e, message)
+    except Exception as e:
+        await message.reply(f"Error during retry upload: {str(e)}")
+
 
 # /retry_download command handler
 @app.on_message(filters.command("retry_download"))
