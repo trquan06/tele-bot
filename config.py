@@ -10,7 +10,8 @@ BOT_TOKEN = "7878223314:AAGdrEWvu86sVWXCHIDFqqZw6m68mK6q5pY"
 BASE_DOWNLOAD_FOLDER = os.path.join(os.path.expanduser("~"), "Downloads")
 CHUNK_SIZE = 1024 * 1024 * 10  # 10 MB chunks for faster downloads
 MAX_RETRIES = 5  # Retry attempts for large file downloads
-
+EXTRACT_FOLDER = os.path.join(BASE_DOWNLOAD_FOLDER, "extracted")  # Folder for extracted files
+MAX_FILE_SIZE = 1024 * 1024 * 1024 * 10  # 10GB maximum file size for downloads
 # Concurrency limits
 MAX_CONCURRENT_DOWNLOADS = 10
 
