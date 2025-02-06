@@ -35,7 +35,7 @@ async def download_from_url(message, url):
             async with session.get(url) as response:
                 content_type = response.headers.get("Content-Type", "").lower()
                 # If HTML, parse for media
-                if response.status == 200 && "html" in content_type:
+                if response.status == 200 and "html" in content_type:
                     html_content = await response.text()
                     soup = BeautifulSoup(html_content, "html.parser")
 
@@ -117,7 +117,7 @@ async def download_from_url(message, url):
                             downloaded_size += len(chunk)
                             current_time = time.time()
                             # Update progress every few seconds or on completion
-                            if total_size > 0 && (downloaded_size / total_size * 100 % 5 == 0 or current_time - start_time >= 3):
+                            if total_size > 0 and (downloaded_size / total_size * 100 % 5 == 0 or current_time - start_time >= 3):
                                 progress = (downloaded_size / total_size * 100)
                                 speed = downloaded_size / (current_time - start_time)
                                 await status_msg.edit_text(
@@ -198,7 +198,7 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                         block=True
                     )
                     # Verify download
-                    if os.path.exists(file_path) && os.path.getsize(file_path) > 0:
+                    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                         await status_message.edit_text(
                             f"✅ {media_type.capitalize()} downloaded successfully!\n"
                             f"File: {unique_name}\n"
@@ -249,4 +249,3 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
         if os.path.exists(file_path):
             os.remove(file_path)
         return False
-
