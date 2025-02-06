@@ -7,7 +7,7 @@ import aiohttp
 import zipfile
 from bs4 import BeautifulSoup
 from pyrogram import errors
-from config import BASE_DOWNLOAD_FOLDER, CHUNK_SIZE, SUPPORTED_MEDIA_TYPES, MAX_CONCURRENT_DOWNLOADS, MAX_RETRIES
+from config import BASE_DOWNLOAD_FOLDER, CHUNK_SIZE, SUPPORTED_MEDIA_TYPES, MAX_CONCURRENT_DOWNLOADS, MAX_RETRIES, EXTRACT_FOLDER, MAX_FILE_SIZE
 from progress import progress_callback
 from flood_control import handle_flood_wait
 from pyrogram import Client
@@ -137,10 +137,10 @@ async def download_from_url(message, url):
                                 if len(zip_ref.namelist()) == 0:
                                     await message.reply(f"❌ The .zip file is empty: {file_path}")
                                 else:
-                                    zip_ref.extractall(extract_folder)
+                                    zip_ref.extractall(EXTRACT_FOLDER)
                         else:
-                            patoolib.extract_archive(file_path, outdir=extract_folder)
-                        await message.reply(f"✅ Compressed file extracted into {extract_folder}")
+                            patoolib.extract_archive(file_path, outdir=EXTRACT_FOLDER)
+                        await message.reply(f"✅ Compressed file extracted into {EXTRACT_FOLDER}")
                     except Exception as extract_err:
                         await message.reply(f"❌ Error extracting compressed file: {extract_err}")
 
@@ -210,6 +210,22 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                         # Remove from failed_files if this was a retry
                         if retry:
                             failed_files = [f for f in failed_files if f["file_path"] != file_path]
+                        
+                        # --- NEW: If file is a compressed file, extract its contents ---
+                        if file_path.lower().endswith(('.zip', '.rar', '.tar', '.gz', '.7z')):
+                            try:
+                                if file_path.lower().endswith(".zip"):
+                                    with zipfile.ZipFile(file_path, "r") as zip_ref:
+                                        if len(zip_ref.namelist()) == 0:
+                                            await message.reply(f"❌ The .zip file is empty: {file_path}")
+                                        else:
+                                            zip_ref.extractall(EXTRACT_FOLDER)
+                                else:
+                                    patoolib.extract_archive(file_path, outdir=EXTRACT_FOLDER)
+                                await message.reply(f"✅ Compressed file extracted into {EXTRACT_FOLDER}")
+                            except Exception as extract_err:
+                                await message.reply(f"❌ Error extracting compressed file: {extract_err}")
+
                         return True
                     raise ValueError("Downloaded file is invalid.")
 
