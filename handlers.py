@@ -277,3 +277,11 @@ async def handle_forwarded_message(client, message):
         await handle_flood_wait(e, message)
     except Exception as e:
         await message.reply(f"❌ Error processing forwarded message: {str(e)}")
+    finally:
+        # Ensure the file is properly closed before accessing it again
+        if 'file_path' in locals() and os.path.exists(file_path):
+            try:
+                with open(file_path, 'rb') as f:
+                    pass
+            except Exception as e:
+                print(f"Error closing file: {str(e)}")
