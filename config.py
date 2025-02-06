@@ -18,6 +18,7 @@ MAX_CONCURRENT_DOWNLOADS = 10
 SUPPORTED_MEDIA_TYPES = {
     'image': ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff'],
     'video': ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v']
+    'compressed': ['.zip', '.rar', '.tar', '.gz', '.7z']
 }
 
 # Create download folder if it doesn't exist
