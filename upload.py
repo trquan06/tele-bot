@@ -2,7 +2,8 @@ import os
 import subprocess
 from config import BASE_DOWNLOAD_FOLDER
 from pyrogram import errors
-
+import zipfile
+import patoolib
 # Đường dẫn đầy đủ đến rclone.exe, cập nhật đường dẫn cho phù hợp với hệ thống của bạn
 RCLONE_PATH = "C:\\rclone\\rclone.exe"  # <-- Chỉnh sửa đường dẫn nếu cần
 
