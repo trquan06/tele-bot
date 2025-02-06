@@ -179,6 +179,7 @@ async def download_from_url(message, url):
 
 async def download_with_progress(message, media_type, retry=False, max_retries=MAX_RETRIES, retry_delay=2):
     global failed_files
+    file_path = ""  # Initialize file_path with a default value
     try:
         # Determine media and filename based on type
         if media_type == "ảnh":
@@ -212,19 +213,21 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                     if os.path.exists(file_path):
                         os.remove(file_path)
                     
-                    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                        temp_file_path = temp_file.name
-                        with open(temp_file_path, "wb") as f:
-                            windows_file_lock(f)
-                            await message.download(
-                                file_name=temp_file_path,
-                                progress=lambda current, total: asyncio.create_task(
-                                    progress_callback(current, total, status_message, start_time, media_type)
-                                ),
-                                block=True
-                            )
-                            windows_file_unlock(f)
-                        os.replace(temp_file_path, file_path)  # Using os.replace for atomic operation
+                   with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_file_path = temp_file.name
+            with open(temp_file_path, "wb") as f:
+                windows_file_lock(f)
+                try:
+                    await message.download(
+                        file_name=temp_file_path,
+                        progress=lambda current, total: asyncio.create_task(
+                            progress_callback(current, total, status_message, start_time, media_type)
+                        ),
+                        block=True
+                    )
+                finally:
+                    windows_file_unlock(f)  # Ensure file is unlocked even if an error occurs
+            os.replace(temp_file_path, file_path)  # Using os.replace for atomic operation
 
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                         await status_message.edit_text(
