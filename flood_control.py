@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 # Global dictionary to track flood wait status per chat
 flood_wait_status = {}
 
+# Global dictionary to track rate limiting status per chat
+rate_limit_status = {}
 async def handle_flood_wait(error, message):
     """
     Handles Telegram FloodWait errors with notifications.
@@ -58,3 +60,20 @@ async def check_flood_wait_status(chat_id):
         else:
             flood_wait_status.pop(chat_id, None)
     return False, 0
+
+async def rate_limit(chat_id, limit=5, period=60):
+    """
+    Implements rate limiting to prevent API abuse.
+    """
+    now = datetime.now()
+    if chat_id not in rate_limit_status:
+        rate_limit_status[chat_id] = []
+
+    # Remove timestamps older than the period
+    rate_limit_status[chat_id] = [timestamp for timestamp in rate_limit_status[chat_id] if (now - timestamp).total_seconds() < period]
+
+    if len(rate_limit_status[chat_id]) >= limit:
+        wait_time = period - (now - rate_limit_status[chat_id][0]).total_seconds()
+        raise Exception(f"Rate limit exceeded. Try again in {int(wait_time)} seconds.")
+
+    rate_limit_status[chat_id].append(now)
