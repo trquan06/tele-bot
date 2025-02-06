@@ -120,7 +120,7 @@ async def download_from_url(message, url):
                                 progress = (downloaded_size / total_size * 100)
                                 speed = downloaded_size / (current_time - start_time)
                                 await status_msg.edit_text(
-                                    f"Downloading file: {progress:.1f}%\nSpeed: {speed:.1f} bytes/s\nDownloaded: {downloaded_size} bytes"
+                                    f"Downloading file: {progress:.1f}%\nSpeed: {speed:.1f} bytes/s\nDownloaded: {downloaded_size} MB"
                                 )
                 await status_msg.edit_text(f"✅ Downloaded file from URL: {url}\nSaved at: {file_path}")
 
