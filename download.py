@@ -12,7 +12,8 @@ from progress import progress_callback
 from flood_control import handle_flood_wait
 from pyrogram import Client
 import patoolib
-
+import tempfile
+import fcntl
 # Semaphore to limit concurrent downloads
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
@@ -109,20 +110,24 @@ async def download_from_url(message, url):
                 total_size = int(response.headers.get('Content-Length', 0))
                 downloaded_size = 0
                 start_time = time.time()
-                status_msg = await message.reply("Starting file download...")
-                with open(file_path, "wb") as f:
-                    async for chunk in response.content.iter_chunked(CHUNK_SIZE):
-                        if chunk:
-                            f.write(chunk)
-                            downloaded_size += len(chunk)
-                            current_time = time.time()
-                            # Update progress every few seconds or on completion
-                            if total_size > 0 and (downloaded_size / total_size * 100 % 5 == 0 or current_time - start_time >= 3):
-                                progress = (downloaded_size / total_size * 100)
-                                speed = downloaded_size / (current_time - start_time)
-                                await status_msg.edit_text(
-                                    f"Downloading file: {progress:.1f}%\nSpeed: {speed:.1f} bytes/s\nDownloaded: {downloaded_size} MB"
-                                )
+                                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                    temp_file_path = temp_file.name
+                    with open(temp_file_path, "wb") as f:
+                        fcntl.flock(f, fcntl.LOCK_EX)
+                        async for chunk in response.content.iter_chunked(CHUNK_SIZE):
+                            if chunk:
+                                f.write(chunk)
+                                downloaded_size += len(chunk)
+                                current_time = time.time()
+                                # Update progress every few seconds or on completion
+                                if total_size > 0 and (downloaded_size / total_size * 100 % 5 == 0 or current_time - start_time >= 3):
+                                    progress = (downloaded_size / total_size * 100)
+                                    speed = downloaded_size / (current_time - start_time)
+                                    await status_msg.edit_text(
+                                        f"Downloading file: {progress:.1f}%\nSpeed: {speed:.1f} bytes/s\nDownloaded: {downloaded_size} MB"
+                                    )
+                        fcntl.flock(f, fcntl.LOCK_UN)
+                os.rename(temp_file_path, file_path)
                 await status_msg.edit_text(f"✅ Downloaded file from URL: {url}\nSaved at: {file_path}")
                 
                 # Verify file integrity
@@ -193,13 +198,19 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                     if os.path.exists(file_path):
                         os.remove(file_path)
                     # Wrap download_media call to catch socket.send exceptions
-                    await message.download(
-                        file_name=file_path,
-                        progress=lambda current, total: asyncio.create_task(
-                            progress_callback(current, total, status_message, start_time, media_type)
-                        ),
-                        block=True
-                    )
+                   with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                        temp_file_path = temp_file.name
+                        with open(temp_file_path, "wb") as f:
+                            fcntl.flock(f, fcntl.LOCK_EX)
+                            await message.download(
+                                file_name=temp_file_path,
+                                progress=lambda current, total: asyncio.create_task(
+                                    progress_callback(current, total, status_message, start_time, media_type)
+                                ),
+                                block=True
+                            )
+                            fcntl.flock(f, fcntl.LOCK_UN)
+                    os.rename(temp_file_path, file_path)
                     # Verify download
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                         await status_message.edit_text(
