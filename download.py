@@ -11,6 +11,7 @@ from config import BASE_DOWNLOAD_FOLDER, CHUNK_SIZE, SUPPORTED_MEDIA_TYPES, MAX_
 from progress import progress_callback
 from flood_control import handle_flood_wait
 from pyrogram import Client
+import patoolib
 
 # Semaphore to limit concurrent downloads
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
@@ -123,7 +124,13 @@ async def download_from_url(message, url):
                                     f"Downloading file: {progress:.1f}%\nSpeed: {speed:.1f} bytes/s\nDownloaded: {downloaded_size} MB"
                                 )
                 await status_msg.edit_text(f"✅ Downloaded file from URL: {url}\nSaved at: {file_path}")
+                
+                # Verify file integrity
+                if downloaded_size != total_size:
+                    raise ValueError(f"Incomplete download: expected {total_size} bytes, got {downloaded_size} bytes")
 
+                # --- NEW: If file is a compressed file, extract its contents ---
+                if file_path.lower().endswith(('.zip', '.rar', '.tar', '.gz', '.7z')):
                 # --- NEW: If file is a ZIP, extract its contents ---
                 if file_path.lower().endswith(".zip"):
                     try:
