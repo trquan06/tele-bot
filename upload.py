@@ -3,6 +3,9 @@ import subprocess
 from config import BASE_DOWNLOAD_FOLDER
 from pyrogram import errors
 
+# Đường dẫn đầy đủ đến rclone.exe, cập nhật đường dẫn cho phù hợp với hệ thống của bạn
+RCLONE_PATH = "C:\\rclone\\rclone.exe"  # <-- Chỉnh sửa đường dẫn nếu cần
+
 # File to store upload errors (each line is a filepath that failed)
 UPLOAD_ERROR_LOG = os.path.join(BASE_DOWNLOAD_FOLDER, "upload_errors.txt")
 
@@ -19,7 +22,7 @@ async def upload_to_google_photos(message):
         with open(log_file_path, "w", encoding="utf-8") as log_file:
             result = subprocess.run(
                 [
-                    "rclone", "copy", BASE_DOWNLOAD_FOLDER, f"GG PHOTO:album/{album_name}",
+                    RCLONE_PATH, "copy", BASE_DOWNLOAD_FOLDER, f"GG PHOTO:album/{album_name}",
                     "--transfers=32", "--drive-chunk-size=128M", "--tpslimit=20", "-P"
                 ],
                 stdout=log_file, stderr=log_file, text=True, encoding="utf-8"
@@ -50,6 +53,7 @@ async def upload_to_google_photos(message):
         # In case of exception, log all files for retry:
         with open(UPLOAD_ERROR_LOG, "a", encoding="utf-8") as error_log:
             error_log.write(f"{BASE_DOWNLOAD_FOLDER}\n")
+
 
 async def retry_upload_command(client, message):
     """
@@ -82,7 +86,7 @@ async def retry_upload_command(client, message):
                 with open(log_file_path, "w", encoding="utf-8") as log_file:
                     result = subprocess.run(
                         [
-                            "rclone", "copy", path, f"GG PHOTO:album/ONLYFAN",
+                            RCLONE_PATH, "copy", path, f"GG PHOTO:album/ONLYFAN",
                             "--transfers=32", "--drive-chunk-size=128M", "--tpslimit=20", "-P"
                         ],
                         stdout=log_file, stderr=log_file, text=True, encoding="utf-8"
