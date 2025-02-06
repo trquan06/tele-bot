@@ -131,7 +131,84 @@ async def status_command(client, message):
     except Exception as e:
         await message.reply(f"Error retrieving system status: {str(e)}")
 
-# The rest of your command handlers remain the same...
+@app.on_message(filters.command("download"))
+async def download_command(client, message):
+    global downloading
+    try:
+        if len(message.command) > 1:
+            url = message.command[1]
+            await download_from_url(message, url)
+        else:
+            downloading = True
+            await message.reply("✅ Download mode activated. Forward media to start downloading.")
+    except errors.FloodWait as e:
+        await handle_flood_wait(e, message)
+    except Exception as e:
+        await message.reply(f"❌ Error starting download mode: {str(e)}")
+
+@app.on_message(filters.command("stop"))
+async def stop_command(client, message):
+    global downloading
+    try:
+        downloading = False
+        await message.reply("✅ Download mode deactivated.")
+    except errors.FloodWait as e:
+        await handle_flood_wait(e, message)
+    except Exception as e:
+        await message.reply(f"❌ Error stopping download mode: {str(e)}")
+
+@app.on_message(filters.command("upload"))
+async def upload_command(client, message):
+    global uploading
+    try:
+        uploading = True
+        await upload_to_google_photos(message)
+        uploading = False
+    except errors.FloodWait as e:
+        await handle_flood_wait(e, message)
+    except Exception as e:
+        uploading = False
+        await message.reply(f"❌ Error uploading files: {str(e)}")
+
+@app.on_message(filters.command("retry_upload"))
+async def retry_upload_command_handler(client, message):
+    try:
+        await retry_upload_command(client, message)
+    except errors.FloodWait as e:
+        await handle_flood_wait(e, message)
+    except Exception as e:
+        await message.reply(f"❌ Error retrying uploads: {str(e)}")
+
+@app.on_message(filters.command("retry_download"))
+async def retry_download_command(client, message):
+    global failed_files
+    try:
+        if not failed_files:
+            await message.reply("No failed downloads to retry.")
+            return
+
+        await message.reply(f"Retrying {len(failed_files)} failed downloads...")
+        for file_info in failed_files:
+            await download_with_progress(file_info["message"], file_info["media_type"], retry=True)
+        failed_files = []
+        await message.reply("✅ All failed downloads retried.")
+    except errors.FloodWait as e:
+        await handle_flood_wait(e, message)
+    except Exception as e:
+        await message.reply(f"❌ Error retrying downloads: {str(e)}")
+
+@app.on_message(filters.command("delete"))
+async def delete_command(client, message):
+    try:
+        for root, dirs, files in os.walk(BASE_DOWNLOAD_FOLDER):
+            for file in files:
+                os.remove(os.path.join(root, file))
+        await message.reply("✅ All files in the download folder have been deleted.")
+    except errors.FloodWait as e:
+        await handle_flood_wait(e, message)
+    except Exception as e:
+        await message.reply(f"❌ Error deleting files: {str(e)}")
+
 
 # Improved forwarded message handler
 @app.on_message(filters.forwarded & (filters.photo | filters.video | filters.document))
