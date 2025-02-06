@@ -131,15 +131,15 @@ async def download_from_url(message, url):
 
                 # --- NEW: If file is a compressed file, extract its contents ---
                 if file_path.lower().endswith(('.zip', '.rar', '.tar', '.gz', '.7z')):
-                # --- NEW: If file is a ZIP, extract its contents ---
-                if file_path.lower().endswith(".zip"):
                     try:
-                        extract_folder = BASE_DOWNLOAD_FOLDER  # same folder as downloaded file; adjust if needed
-                        with zipfile.ZipFile(file_path, "r") as zip_ref:
-                            zip_ref.extractall(extract_folder)
-                        await message.reply(f"✅ ZIP file extracted into {extract_folder}")
-                    except Exception as zip_err:
-                        await message.reply(f"❌ Error extracting ZIP file: {zip_err}")
+                        if file_path.lower().endswith(".zip"):
+                            with zipfile.ZipFile(file_path, "r") as zip_ref:
+                                zip_ref.extractall(extract_folder)
+                        else:
+                            patoolib.extract_archive(file_path, outdir=extract_folder)
+                        await message.reply(f"✅ Compressed file extracted into {extract_folder}")
+                    except Exception as extract_err:
+                        await message.reply(f"❌ Error extracting compressed file: {extract_err}")
 
         except errors.FloodWait as e:
             await handle_flood_wait(e, message)
