@@ -14,6 +14,7 @@ from pyrogram import Client
 import patoolib
 import tempfile
 import fcntl
+
 # Semaphore to limit concurrent downloads
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
@@ -110,7 +111,9 @@ async def download_from_url(message, url):
                 total_size = int(response.headers.get('Content-Length', 0))
                 downloaded_size = 0
                 start_time = time.time()
-                                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                status_msg = await message.reply("Starting file download...")
+                
+                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
                     temp_file_path = temp_file.name
                     with open(temp_file_path, "wb") as f:
                         fcntl.flock(f, fcntl.LOCK_EX)
@@ -119,7 +122,6 @@ async def download_from_url(message, url):
                                 f.write(chunk)
                                 downloaded_size += len(chunk)
                                 current_time = time.time()
-                                # Update progress every few seconds or on completion
                                 if total_size > 0 and (downloaded_size / total_size * 100 % 5 == 0 or current_time - start_time >= 3):
                                     progress = (downloaded_size / total_size * 100)
                                     speed = downloaded_size / (current_time - start_time)
@@ -127,14 +129,14 @@ async def download_from_url(message, url):
                                         f"Downloading file: {progress:.1f}%\nSpeed: {speed:.1f} bytes/s\nDownloaded: {downloaded_size} MB"
                                     )
                         fcntl.flock(f, fcntl.LOCK_UN)
-                os.rename(temp_file_path, file_path)
-                await status_msg.edit_text(f"✅ Downloaded file from URL: {url}\nSaved at: {file_path}")
-                
+                    os.rename(temp_file_path, file_path)
+                    await status_msg.edit_text(f"✅ Downloaded file from URL: {url}\nSaved at: {file_path}")
+
                 # Verify file integrity
                 if downloaded_size != total_size:
                     raise ValueError(f"Incomplete download: expected {total_size} bytes, got {downloaded_size} bytes")
 
-                # --- NEW: If file is a compressed file, extract its contents ---
+                # Extract compressed files
                 if file_path.lower().endswith(('.zip', '.rar', '.tar', '.gz', '.7z')):
                     try:
                         if file_path.lower().endswith(".zip"):
@@ -162,9 +164,8 @@ async def download_from_url(message, url):
             await message.reply(error_report)
 
 async def download_with_progress(message, media_type, retry=False, max_retries=MAX_RETRIES, retry_delay=2):
-    global failed_files  # Declare at the very start of the function
+    global failed_files
     try:
-        from config import BASE_DOWNLOAD_FOLDER  # import here to avoid circular imports
         # Determine media and filename based on type
         if media_type == "ảnh":
             if not hasattr(message, 'photo'):
@@ -182,8 +183,7 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
             media = message.document
             file_name = getattr(media, 'file_name', None) or f"file_{media.file_unique_id}"
 
-        # Create a unique filename to avoid overwriting
-        import os, uuid
+        # Create a unique filename
         base_name, ext = os.path.splitext(file_name)
         unique_name = f"{base_name}_{uuid.uuid4().hex[:8]}{ext}"
         file_path = os.path.join(BASE_DOWNLOAD_FOLDER, unique_name)
@@ -197,8 +197,8 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                 try:
                     if os.path.exists(file_path):
                         os.remove(file_path)
-                    # Wrap download_media call to catch socket.send exceptions
-                   with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                    
+                    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
                         temp_file_path = temp_file.name
                         with open(temp_file_path, "wb") as f:
                             fcntl.flock(f, fcntl.LOCK_EX)
@@ -210,19 +210,17 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                                 block=True
                             )
                             fcntl.flock(f, fcntl.LOCK_UN)
-                    os.rename(temp_file_path, file_path)
-                    # Verify download
+                        os.rename(temp_file_path, file_path)
+
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                         await status_message.edit_text(
                             f"✅ {media_type.capitalize()} downloaded successfully!\n"
                             f"File: {unique_name}\n"
                             f"Size: {os.path.getsize(file_path)} bytes"
                         )
-                        # Remove from failed_files if this was a retry
                         if retry:
                             failed_files = [f for f in failed_files if f["file_path"] != file_path]
                         
-                        # --- NEW: If file is a compressed file, extract its contents ---
                         if file_path.lower().endswith(('.zip', '.rar', '.tar', '.gz', '.7z')):
                             try:
                                 if file_path.lower().endswith(".zip"):
