@@ -13,13 +13,27 @@ from flood_control import handle_flood_wait
 from pyrogram import Client
 import patoolib
 import tempfile
-import fcntl
+import msvcrt  # Windows-specific file locking
 
 # Semaphore to limit concurrent downloads
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
 # Global list for tracking failed downloads
 failed_files = []
+
+def windows_file_lock(file):
+    """Windows-compatible file locking"""
+    try:
+        msvcrt.locking(file.fileno(), msvcrt.LK_NBLCK, 1)
+    except:
+        pass
+
+def windows_file_unlock(file):
+    """Windows-compatible file unlocking"""
+    try:
+        msvcrt.locking(file.fileno(), msvcrt.LK_UNLCK, 1)
+    except:
+        pass
 
 async def download_from_url(message, url):
     """
@@ -112,11 +126,11 @@ async def download_from_url(message, url):
                 downloaded_size = 0
                 start_time = time.time()
                 status_msg = await message.reply("Starting file download...")
-                
+
                 with tempfile.NamedTemporaryFile(delete=False) as temp_file:
                     temp_file_path = temp_file.name
                     with open(temp_file_path, "wb") as f:
-                        fcntl.flock(f, fcntl.LOCK_EX)
+                        windows_file_lock(f)
                         async for chunk in response.content.iter_chunked(CHUNK_SIZE):
                             if chunk:
                                 f.write(chunk)
@@ -128,8 +142,8 @@ async def download_from_url(message, url):
                                     await status_msg.edit_text(
                                         f"Downloading file: {progress:.1f}%\nSpeed: {speed:.1f} bytes/s\nDownloaded: {downloaded_size} MB"
                                     )
-                        fcntl.flock(f, fcntl.LOCK_UN)
-                    os.rename(temp_file_path, file_path)
+                        windows_file_unlock(f)
+                    os.replace(temp_file_path, file_path)  # Using os.replace instead of rename for atomic operation
                     await status_msg.edit_text(f"✅ Downloaded file from URL: {url}\nSaved at: {file_path}")
 
                 # Verify file integrity
@@ -201,7 +215,7 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
                         temp_file_path = temp_file.name
                         with open(temp_file_path, "wb") as f:
-                            fcntl.flock(f, fcntl.LOCK_EX)
+                            windows_file_lock(f)
                             await message.download(
                                 file_name=temp_file_path,
                                 progress=lambda current, total: asyncio.create_task(
@@ -209,8 +223,8 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                                 ),
                                 block=True
                             )
-                            fcntl.flock(f, fcntl.LOCK_UN)
-                        os.rename(temp_file_path, file_path)
+                            windows_file_unlock(f)
+                        os.replace(temp_file_path, file_path)  # Using os.replace for atomic operation
 
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                         await status_message.edit_text(
