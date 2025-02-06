@@ -207,13 +207,21 @@ async def handle_forwarded_message(client, message):
 @app.on_message(filters.command("delete"))
 async def delete_command(client, message):
     try:
-        for filename in os.listdir(BASE_DOWNLOAD_FOLDER):
-            file_path = os.path.join(BASE_DOWNLOAD_FOLDER, filename)
-            try:
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-            except Exception as e:
-                await message.reply(f"Error deleting file {file_path}: {str(e)}")
-        await message.reply("All files in the download folder have been deleted.")
+        confirmation_message = await message.reply("Are you sure you want to delete all files? Type 'yes' to confirm.")
+        
+        @app.on_message(filters.reply & filters.text & filters.user(message.from_user.id))
+        async def confirm_delete(client, reply_message):
+            if reply_message.text.lower() == "yes":
+                for filename in os.listdir(BASE_DOWNLOAD_FOLDER):
+                    file_path = os.path.join(BASE_DOWNLOAD_FOLDER, filename)
+                    try:
+                        if os.path.isfile(file_path):
+                            os.remove(file_path)
+                    except Exception as e:
+                        await message.reply(f"Error deleting file {file_path}: {str(e)}")
+                await message.reply("All files in the download folder have been deleted.")
+            else:
+                await message.reply("Deletion cancelled.")
+            app.remove_handler(confirm_delete)
     except Exception as e:
         await message.reply(f"Error during deletion: {str(e)}")
