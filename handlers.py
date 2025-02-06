@@ -12,7 +12,7 @@ from datetime import datetime
 # Global state flags
 downloading = False
 uploading = False
-
+failed_files = []
 # Initialize the bot client
 app = Client(
     "telegram_downloader",
