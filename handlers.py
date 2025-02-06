@@ -1,7 +1,7 @@
 import os
 import asyncio
 from pyrogram import Client, filters, errors
-from config import API_ID, API_HASH, BOT_TOKEN
+from config import API_ID, API_HASH, BOT_TOKEN, BASE_DOWNLOAD_FOLDER
 from system_monitor import get_system_stats
 from download import download_from_url, download_with_progress, failed_files
 from upload import upload_to_google_photos, retry_upload_command
@@ -32,7 +32,8 @@ async def start_command(client, message):
             "/upload - Sync files to Google Photos\n"           
             "/retry_upload - Retry uploads to Google Photos\n"
             "/retry_download - Retry failed downloads\n"
-            "/status - Show system status"
+            "/status - Show system status\n"
+            "/delete - Delete all files in the download folder"
         )
     except errors.FloodWait as e:
         await handle_flood_wait(e, message)
@@ -201,3 +202,18 @@ async def handle_forwarded_message(client, message):
         await handle_flood_wait(e, message)
     except Exception as e:
         await message.reply(f"Error processing forwarded message: {str(e)}")
+
+# /delete command handler
+@app.on_message(filters.command("delete"))
+async def delete_command(client, message):
+    try:
+        for filename in os.listdir(BASE_DOWNLOAD_FOLDER):
+            file_path = os.path.join(BASE_DOWNLOAD_FOLDER, filename)
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            except Exception as e:
+                await message.reply(f"Error deleting file {file_path}: {str(e)}")
+        await message.reply("All files in the download folder have been deleted.")
+    except Exception as e:
+        await message.reply(f"Error during deletion: {str(e)}")
