@@ -134,7 +134,10 @@ async def download_from_url(message, url):
                     try:
                         if file_path.lower().endswith(".zip"):
                             with zipfile.ZipFile(file_path, "r") as zip_ref:
-                                zip_ref.extractall(extract_folder)
+                                if len(zip_ref.namelist()) == 0:
+                                    await message.reply(f"❌ The .zip file is empty: {file_path}")
+                                else:
+                                    zip_ref.extractall(extract_folder)
                         else:
                             patoolib.extract_archive(file_path, outdir=extract_folder)
                         await message.reply(f"✅ Compressed file extracted into {extract_folder}")
