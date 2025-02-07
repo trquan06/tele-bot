@@ -561,9 +561,34 @@ async def handle_html_content(message, url, html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
     media_links = []
 
-# Handle Telegra.ph
-if 'telegra.ph' in url:
-    media_links.extend(
-        f"https://telegra.ph{tag['src']}" if tag['src'].startswith('/') else tag['src']
-        for tag in soup.find_all(['img', 'video'])  # Add the missing part to find media tags
-    )  # Close the parenthesis
+    try:
+        # Handle Telegra.ph
+        if 'telegra.ph' in url:
+            media_links.extend(
+                f"https://telegra.ph{tag['src']}" if tag['src'].startswith('/') else tag['src']
+                for tag in soup.find_all(['img', 'video'])
+            )
+            
+            if media_links:
+                status_message = await message.reply(f"Found {len(media_links)} media files. Starting download...")
+                
+                for link in media_links:
+                    try:
+                        await download_from_url(message, link)
+                    except Exception as e:
+                        logger.error(f"Error downloading media from {link}: {e}")
+                        await message.reply(f"❌ Failed to download: {link}")
+                        
+                await status_message.edit(f"✅ Downloaded {len(media_links)} files from Telegra.ph")
+            else:
+                await message.reply("❌ No media files found on the page")
+                
+        # Add support for other sites here if needed
+        else:
+            await message.reply("❌ Unsupported website")
+            
+    except Exception as e:
+        logger.error(f"HTML content handling error: {e}")
+        await message.reply(f"❌ Error processing webpage: {str(e)}")
+        
+    return media_links
