@@ -156,26 +156,96 @@ async def download_from_url(message, url):
                 error_report += f"- {link}: {err}\n"
             await message.reply(error_report)
 
-async def download_with_progress(message, media_type, retry=False, max_retries=MAX_RETRIES, retry_delay=2):
-    global failed_files  # Declare at the very start of the function
+async def download_with_progress(message, media_type, retry=False, max_retries=MAX_RETRIES):
+    """Enhanced download function with better error handling and progress tracking"""
+    global failed_files
+    
     try:
-        from config import BASE_DOWNLOAD_FOLDER  # import here to avoid circular imports
-        # Determine media and filename based on type
-        if media_type == "ảnh":
-            if not hasattr(message, 'photo'):
-                raise ValueError("No photo found in message.")
-            media = message.photo[-1] if isinstance(message.photo, list) else message.photo
-            file_name = f"photo_{media.file_unique_id}.jpg"
-        elif media_type == "video":
+        # Verify file size before proceeding
+        if not await verify_file_size(message):
+            raise DownloadError("File size verification failed")
+
+        # Xác định loại media và filename
+        if media_type == "video":
             if not hasattr(message, 'video'):
-                raise ValueError("No video found in message.")
+                raise ValueError("No video found in message")
             media = message.video
-            file_name = getattr(media, 'file_name', None) or f"video_{media.file_unique_id}.mp4"
+            # Giữ nguyên tên file gốc nếu có
+            original_name = getattr(media, 'file_name', None)
+            file_name = original_name if original_name else f"video_{uuid.uuid4().hex[:8]}.mp4"
+            
+        elif media_type == "ảnh":
+            if not hasattr(message, 'photo'):
+                raise ValueError("No photo found in message")
+            media = message.photo[-1] if isinstance(message.photo, list) else message.photo
+            file_name = f"photo_{uuid.uuid4().hex[:8]}.jpg"
         else:
-            if not hasattr(message, 'document'):
-                raise ValueError("No document found in message.")
-            media = message.document
-            file_name = getattr(media, 'file_name', None) or f"file_{media.file_unique_id}"
+            raise ValueError(f"Unsupported media type: {media_type}")
+
+        file_path = os.path.join(BASE_DOWNLOAD_FOLDER, file_name)
+        
+        # Create status message
+        status_message = await message.reply(f"Starting download of {media_type}...")
+        start_time = time.time()
+        
+        async with download_semaphore:
+            # Download with chunked transfer
+            download_task = asyncio.create_task(
+                message.download(
+                    file_name=file_path,
+                    progress=lambda current, total: asyncio.create_task(
+                        progress_callback(current, total, status_message, start_time, media_type)
+                    ),
+                    block=True
+                )
+            )
+            
+            try:
+                # Set timeout for download
+                await asyncio.wait_for(download_task, timeout=DOWNLOAD_TIMEOUT)
+                
+                # Verify downloaded file
+                if os.path.exists(file_path):
+                    file_size = os.path.getsize(file_path)
+                    if file_size == 0:
+                        raise DownloadError("Downloaded file is empty")
+                        
+                    # Log successful download
+                    logger.info(f"Successfully downloaded {media_type}: {file_name} ({file_size} bytes)")
+                    
+                    await status_message.edit_text(
+                        f"✅ {media_type.capitalize()} downloaded successfully!\n"
+                        f"📁 File: {file_name}\n"
+                        f"📊 Size: {file_size/(1024*1024):.1f} MB"
+                    )
+                    return True
+                    
+            except asyncio.TimeoutError:
+                raise DownloadError("Download timed out")
+                
+    except Exception as e:
+        error_msg = f"❌ Error downloading {media_type}: {str(e)}"
+        logger.error(error_msg)
+        
+        if not retry:
+            failed_files.append({
+                "file_path": file_path,
+                "message": message,
+                "media_type": media_type,
+                "error": str(e)
+            })
+            
+        await message.reply(
+            f"{error_msg}\n"
+            "Use /retry_download to attempt manual re-download.",
+            quote=True
+        )
+        
+        # Clean up failed download
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            
+        return False
 
         # Create a unique filename to avoid overwriting
         import os, uuid
