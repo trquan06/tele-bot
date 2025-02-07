@@ -43,6 +43,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+class TelegramBot:
+    def __init__(self):
+        self.app = Client(
+            "telegram_downloader",
+            api_id=Config.API_ID,
+            api_hash=Config.API_HASH,
+            bot_token=Config.BOT_TOKEN
+        )
+        self.download_manager = DownloadManager()
+        self._setup_handlers()
+
+    def _setup_handlers(self):
 @dataclass
 class DownloadTask:
     message_id: int
