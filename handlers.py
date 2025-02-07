@@ -7,7 +7,6 @@ from download import download_from_url, download_with_progress, failed_files
 from upload import upload_to_google_photos, retry_upload_command
 from flood_control import handle_flood_wait, check_flood_wait_status
 from media_type_detection import get_media_type
-from message_handler import handle_forwarded_message
 
 # Global state flags
 downloading = False
