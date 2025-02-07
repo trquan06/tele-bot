@@ -24,6 +24,9 @@ download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
 # Global list for tracking failed downloads
 failed_files = []
+class DownloadError(Exception):
+    """Custom exception for download-related errors."""
+    pass
 
 async def download_from_url(message, url):
     """
@@ -279,10 +282,11 @@ async def verify_file_size(message):
 
         if media_info.file_size > MAX_FILE_SIZE:
             await message.reply(f"❌ File size exceeds the maximum allowed limit of {MAX_FILE_SIZE/(1024*1024*1024):.1f} GB.")
-            return False
+            
+            raise DownloadError("File size exceeds the maximum allowed limit")
 
         return True
 
     except Exception as e:
         await message.reply(f"Error verifying file size: {str(e)}")
-        return False
+        raise DownloadError(f"Error verifying file size: {str(e)}")
