@@ -7,6 +7,8 @@ from download import download_from_url, download_with_progress, failed_files
 from upload import upload_to_google_photos, retry_upload_command
 from flood_control import handle_flood_wait, check_flood_wait_status
 from media_type_detection import get_media_type
+from message_handler import handle_forwarded_message
+
 # Global state flags
 downloading = False
 uploading = False
@@ -199,3 +201,8 @@ async def delete_command(client, message):
             app.remove_handler(confirm_delete)
     except Exception as e:
         await message.reply(f"Error during deletion: {str(e)}")
+
+# Handler for forwarded messages with media
+@app.on_message(filters.forwarded & (filters.photo | filters.video | filters.document))
+async def handle_forwarded_message(client, message):
+    await handle_forwarded_message(client, message)
