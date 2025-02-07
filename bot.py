@@ -54,16 +54,16 @@ class TelegramBot:
         self.download_manager = DownloadManager()
         self._setup_handlers()
 
-    def _setup_handlers(self):
-@dataclass
-class DownloadTask:
-    message_id: int
-    file_path: str
-    media_type: str
-    size: int
-    status: str
-    start_time: float
-    retries: int = 0
+def _setup_handlers(self):
+        @dataclass
+        class DownloadTask:
+            message_id: int
+            file_path: str
+            media_type: str
+            size: int
+            status: str
+            start_time: float
+            retries: int = 0
 
 class DownloadManager:
     def __init__(self):
