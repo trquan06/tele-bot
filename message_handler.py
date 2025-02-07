@@ -3,7 +3,7 @@
 import os
 import asyncio
 from pyrogram import Client, filters, errors
-from config import BASE_DOWNLOAD_FOLDER, SUPPORTED_MEDIA_TYPES
+from config import BASE_DOWNLOAD_FOLDER, SUPPORTED_MEDIA_TYPES, logger
 from download import download_from_url, download_with_progress
 from flood_control import handle_flood_wait
 from media_type_detection import get_media_type
@@ -68,6 +68,7 @@ async def handle_message(client, message):
 @app.on_message(filters.forwarded & (filters.photo | filters.video | filters.document))
 async def handle_forwarded_message(client, message):
     try:
+        logger.info(f"Processing forwarded message: {message.message_id}")
         tasks = []
         # Nếu tin nhắn có ảnh
         if message.photo:
@@ -98,6 +99,7 @@ async def handle_forwarded_message(client, message):
     except errors.FloodWait as e:
         await handle_flood_wait(e, message)
     except Exception as e:
-        await message.reply(f"Có lỗi xảy ra khi xử lý tin nhắn được chuyển tiếp: {str(e)}")
+        logger.error(f"Error processing forwarded message: {str(e)}")
+        await message.reply(f"Error processing forwarded message: {str(e)}")
 
 
