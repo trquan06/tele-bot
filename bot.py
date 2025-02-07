@@ -279,170 +279,109 @@ async def stop_command(client, message):
         downloading = False
     await message.reply("Đã ngừng chế độ tải về.")
 
-@self.app.on_message(filters.command("upload"))
+        @self.app.on_message(filters.command("upload"))
         async def upload_command(client, message):
+            """
+            Handler for the upload command that synchronizes files to Google Photos.
+            Includes proper authorization checks and status updates.
+            """
+            # Authorization check
             if not self.download_manager._is_user_authorized(message.from_user.id):
                 await message.reply("Unauthorized access. Please contact the administrator.")
                 return
 
+            # Check if upload is already in progress
             if self.download_manager.uploading:
                 await message.reply("An upload task is already in progress.")
                 return
 
+            # Set upload flag and begin process
             self.download_manager.uploading = True
             try:
                 await message.reply("Starting file synchronization to Google Photos...")
                 await self._upload_files_to_google_photos(message)
+            except Exception as e:
+                logger.error(f"Upload process failed: {e}")
+                await message.reply(f"Upload process encountered an error: {str(e)}")
             finally:
                 self.download_manager.uploading = False
 
-        @self.app.on_message(filters.command("retry_upload"))
-        async def retry_upload_command(client, message):
-            if not self.download_manager._is_user_authorized(message.from_user.id):
-                await message.reply("Unauthorized access. Please contact the administrator.")
-                return
+    async def _upload_files_to_google_photos(self, message):
+        """
+        Helper method to handle the file upload process to Google Photos.
+        Includes progress tracking and error handling.
+        """
+        # Scan for files to upload
+        files_to_upload = list(self.download_manager.base_path.glob("*.*"))
+        if not files_to_upload:
+            await message.reply("No files found to upload.")
+            return
 
-            if not self.download_manager.failed_uploads:
-                await message.reply("No failed uploads to retry.")
-                return
-
-            if self.download_manager.uploading:
-                await message.reply("An upload task is already in progress. Please wait.")
-                return
-
-            await message.reply(f"Retrying {len(self.download_manager.failed_uploads)} failed uploads...")
-            
-            self.download_manager.uploading = True
-            try:
-                await self._retry_failed_uploads(message)
-            finally:
-                self.download_manager.uploading = False
-
-        async def _upload_files_to_google_photos(self, message):
-            files_to_upload = list(self.download_manager.base_path.glob("*.*"))
-            if not files_to_upload:
-                await message.reply("No files found to upload.")
-                return
-
-            total_files = len(files_to_upload)
-            uploaded_files = 0
-            
-            for file_path in files_to_upload:
-                if file_path.suffix.lower() in {ext for formats in Config.SUPPORTED_FORMATS.values() for ext in formats}:
+        total_files = len(files_to_upload)
+        uploaded_files = 0
+        
+        # Process each file
+        for file_path in files_to_upload:
+            if file_path.suffix.lower() in {ext for formats in Config.SUPPORTED_FORMATS.values() 
+                                          for ext in formats}:
+                try:
+                    # Create upload task
                     task = UploadTask(
                         file_path=str(file_path),
                         status="pending",
                         start_time=time.time()
                     )
                     
-                    try:
-                        # Create upload log file
-                        log_file_path = self.download_manager.temp_path / "upload_log.txt"
-                        
-                        # Use rclone to upload the file
-                        process = await asyncio.create_subprocess_exec(
-                            "rclone", "copy",
-                            str(file_path),
-                            f"GG PHOTO:album/{Config.GOOGLE_PHOTOS_ALBUM}",
-                            "--transfers=32",
-                            "--drive-chunk-size=128M",
-                            "--tpslimit=20",
-                            "-P",
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE
-                        )
-                        
-                        stdout, stderr = await process.communicate()
-                        
-                        if process.returncode == 0:
-                            uploaded_files += 1
-                            task.status = "completed"
-                            # Log success
-                            with open(log_file_path, "a") as log:
-                                log.write(f"Successfully uploaded: {file_path}\n")
-                        else:
-                            task.status = "failed"
-                            task.error_message = stderr.decode()
-                            self.download_manager.failed_uploads.append(task)
-                            # Log error
-                            with open(log_file_path, "a") as log:
-                                log.write(f"Failed to upload {file_path}: {task.error_message}\n")
+                    # Execute upload using rclone
+                    process = await asyncio.create_subprocess_exec(
+                        "rclone", "copy",
+                        str(file_path),
+                        f"GG PHOTO:album/{Config.GOOGLE_PHOTOS_ALBUM}",
+                        "--transfers=32",
+                        "--drive-chunk-size=128M",
+                        "--tpslimit=20",
+                        "-P",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
                     
-                    except Exception as e:
-                        logger.error(f"Error uploading {file_path}: {e}")
+                    stdout, stderr = await process.communicate()
+                    
+                    if process.returncode == 0:
+                        uploaded_files += 1
+                        task.status = "completed"
+                        # Log successful upload
+                        logger.info(f"Successfully uploaded: {file_path}")
+                    else:
                         task.status = "failed"
-                        task.error_message = str(e)
+                        task.error_message = stderr.decode()
                         self.download_manager.failed_uploads.append(task)
+                        logger.error(f"Failed to upload {file_path}: {task.error_message}")
                 
-                # Update progress
+                except Exception as e:
+                    logger.error(f"Error uploading {file_path}: {e}")
+                    task.status = "failed"
+                    task.error_message = str(e)
+                    self.download_manager.failed_uploads.append(task)
+                
+                # Update progress for user
                 progress = (uploaded_files / total_files) * 100
-                await message.reply(f"Upload progress: {progress:.1f}% ({uploaded_files}/{total_files} files)")
-
-            # Final status report
-            if self.download_manager.failed_uploads:
-                failed_count = len(self.download_manager.failed_uploads)
                 await message.reply(
-                    f"Upload completed with {failed_count} failures.\n"
-                    f"Successfully uploaded: {uploaded_files} files\n"
-                    f"Failed uploads: {failed_count} files\n"
-                    "Use /retry_upload to retry failed uploads."
+                    f"Upload progress: {progress:.1f}% ({uploaded_files}/{total_files} files)"
                 )
-            else:
-                await message.reply(f"Successfully uploaded all {uploaded_files} files to Google Photos!")
 
-        async def _retry_failed_uploads(self, message):
-            if not self.download_manager.failed_uploads:
-                await message.reply("No failed uploads to retry.")
-                return
-
-            total_retries = len(self.download_manager.failed_uploads)
-            successful_retries = 0
-            
-            # Create a copy of failed uploads and clear the original list
-            failed_tasks = self.download_manager.failed_uploads.copy()
-            self.download_manager.failed_uploads.clear()
-            
-            for task in failed_tasks:
-                if Path(task.file_path).exists():
-                    task.retries += 1
-                    try:
-                        process = await asyncio.create_subprocess_exec(
-                            "rclone", "copy",
-                            task.file_path,
-                            f"GG PHOTO:album/{Config.GOOGLE_PHOTOS_ALBUM}",
-                            "--transfers=32",
-                            "--drive-chunk-size=128M",
-                            "--tpslimit=20",
-                            "-P",
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE
-                        )
-                        
-                        stdout, stderr = await process.communicate()
-                        
-                        if process.returncode == 0:
-                            successful_retries += 1
-                            task.status = "completed"
-                        else:
-                            task.status = "failed"
-                            task.error_message = stderr.decode()
-                            self.download_manager.failed_uploads.append(task)
-                    
-                    except Exception as e:
-                        logger.error(f"Error during retry upload of {task.file_path}: {e}")
-                        task.status = "failed"
-                        task.error_message = str(e)
-                        self.download_manager.failed_uploads.append(task)
-                else:
-                    await message.reply(f"File not found: {task.file_path}")
-
-            # Final retry status report
-            remaining_failures = len(self.download_manager.failed_uploads)
+        # Provide final status report
+        if self.download_manager.failed_uploads:
+            failed_count = len(self.download_manager.failed_uploads)
             await message.reply(
-                f"Retry upload completed!\n"
-                f"Successfully retried: {successful_retries}/{total_retries} files\n"
-                f"Remaining failed uploads: {remaining_failures}\n"
-                f"Use /retry_upload to retry remaining failed uploads."
+                f"Upload completed with {failed_count} failures.\n"
+                f"Successfully uploaded: {uploaded_files} files\n"
+                f"Failed uploads: {failed_count} files\n"
+                "Use /retry_upload to retry failed uploads."
+            )
+        else:
+            await message.reply(
+                f"Successfully uploaded all {uploaded_files} files to Google Photos!"
             )
 @app.on_message(filters.command("retry_download"))
 async def retry_download_command(client, message):
