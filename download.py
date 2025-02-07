@@ -21,9 +21,6 @@ handler = logging.FileHandler(os.path.join(BASE_DOWNLOAD_FOLDER, 'download_log.t
 handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(handler)
 
-class DownloadError(Exception):
-    """Custom exception for download-related errors"""
-    pass
 # Semaphore to limit concurrent downloads
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
@@ -33,6 +30,163 @@ failed_files = []
 # Enhanced timeout settings
 DOWNLOAD_TIMEOUT = 3600  # 1 hour
 CONNECT_TIMEOUT = 30    # 30 seconds
+
+class DownloadError(Exception):
+    """Custom exception for download-related errors"""
+    pass
+
+async def verify_file_size(message):
+    """Verify if the file size is within allowed limits"""
+    try:
+        if hasattr(message, 'video'):
+            file_size = message.video.file_size
+        elif hasattr(message, 'document'):
+            file_size = message.document.file_size
+        elif hasattr(message, 'photo'):
+            file_size = message.photo[-1].file_size if isinstance(message.photo, list) else message.photo.file_size
+        else:
+            return True  # If we can't determine size, proceed with caution
+
+        if file_size > MAX_FILE_SIZE:
+            raise DownloadError(f"File size ({file_size} bytes) exceeds maximum allowed size ({MAX_FILE_SIZE} bytes)")
+        return True
+    except Exception as e:
+        logger.error(f"Error verifying file size: {str(e)}")
+        return False
+
+async def download_with_progress(message, media_type, retry=False, max_retries=MAX_RETRIES, retry_delay=2):
+    """Enhanced download function with better error handling and progress tracking"""
+    global failed_files
+    
+    try:
+        # Verify file size before proceeding
+        if not await verify_file_size(message):
+            raise DownloadError("File size verification failed")
+
+        # Determine media and filename based on type with enhanced error handling
+        if media_type == "ảnh":
+            if not hasattr(message, 'photo'):
+                raise ValueError("No photo found in message")
+            media = message.photo[-1] if isinstance(message.photo, list) else message.photo
+            file_name = f"photo_{media.file_unique_id}.jpg"
+        elif media_type == "video":
+            if not hasattr(message, 'video'):
+                raise ValueError("No video found in message")
+            media = message.video
+            # Enhanced video filename handling
+            file_name = getattr(media, 'file_name', None)
+            if not file_name or not file_name.lower().endswith(tuple(SUPPORTED_MEDIA_TYPES['video'])):
+                file_name = f"video_{media.file_unique_id}.mp4"
+        else:
+            if not hasattr(message, 'document'):
+                raise ValueError("No document found in message")
+            media = message.document
+            file_name = getattr(media, 'file_name', None) or f"file_{media.file_unique_id}"
+
+        # Create unique filename with better collision handling
+        base_name, ext = os.path.splitext(file_name)
+        unique_name = f"{base_name}_{uuid.uuid4().hex[:8]}{ext}"
+        file_path = os.path.join(BASE_DOWNLOAD_FOLDER, unique_name)
+
+        async with download_semaphore:
+            status_message = await message.reply(f"Starting download of {media_type}...")
+            start_time = time.time()
+            current_try = 0
+
+            while current_try < max_retries:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+
+                    # Enhanced download with chunked transfer and timeout handling
+                    download_task = asyncio.create_task(
+                        message.download(
+                            file_name=file_path,
+                            progress=lambda current, total: asyncio.create_task(
+                                progress_callback(current, total, status_message, start_time, media_type)
+                            ),
+                            block=True
+                        )
+                    )
+
+                    try:
+                        await asyncio.wait_for(download_task, timeout=DOWNLOAD_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        raise DownloadError("Download timed out")
+
+                    # Verify downloaded file
+                    if os.path.exists(file_path):
+                        file_size = os.path.getsize(file_path)
+                        if file_size == 0:
+                            raise DownloadError("Downloaded file is empty")
+                        
+                        # Log successful download
+                        logger.info(f"Successfully downloaded {media_type}: {unique_name} ({file_size} bytes)")
+                        
+                        await status_message.edit_text(
+                            f"✅ {media_type.capitalize()} downloaded successfully!\n"
+                            f"File: {unique_name}\n"
+                            f"Size: {file_size} bytes"
+                        )
+
+                        # Remove from failed_files if this was a retry
+                        if retry:
+                            failed_files = [f for f in failed_files if f["file_path"] != file_path]
+
+                        # Handle compressed files
+                        if file_path.lower().endswith(tuple(SUPPORTED_MEDIA_TYPES['compressed'])):
+                            await extract_compressed_file(message, file_path)
+
+                        return True
+
+                except errors.FloodWait as e:
+                    await handle_flood_wait(e, message)
+                    current_try += 1
+                except Exception as e:
+                    logger.error(f"Download error (attempt {current_try + 1}/{max_retries}): {str(e)}")
+                    current_try += 1
+                    if current_try < max_retries:
+                        await asyncio.sleep(retry_delay * (current_try + 1))  # Exponential backoff
+                    else:
+                        raise e
+
+            raise DownloadError("Exceeded maximum retry attempts")
+
+    except Exception as e:
+        error_msg = f"❌ Error downloading {media_type}: {str(e)}"
+        logger.error(error_msg)
+        if not retry:
+            failed_files.append({
+                "file_path": file_path,
+                "message": message,
+                "media_type": media_type,
+                "error": str(e)
+            })
+        try:
+            await status_message.edit_text(f"{error_msg}\nUse /retry_download to attempt manual re-download.")
+        except Exception as edit_error:
+            logger.error(f"Error updating status message: {str(edit_error)}")
+            
+        if 'file_path' in locals() and os.path.exists(file_path):
+            os.remove(file_path)
+        return False
+
+async def extract_compressed_file(message, file_path):
+    """Separate function for handling compressed file extraction"""
+    try:
+        if file_path.lower().endswith('.zip'):
+            with zipfile.ZipFile(file_path, "r") as zip_ref:
+                if len(zip_ref.namelist()) == 0:
+                    raise DownloadError("The zip file is empty")
+                zip_ref.extractall(EXTRACT_FOLDER)
+        else:
+            patoolib.extract_archive(file_path, outdir=EXTRACT_FOLDER)
+        
+        logger.info(f"Successfully extracted: {file_path} to {EXTRACT_FOLDER}")
+        await message.reply(f"✅ Compressed file extracted into {EXTRACT_FOLDER}")
+    except Exception as e:
+        logger.error(f"Extraction error for {file_path}: {str(e)}")
+        await message.reply(f"❌ Error extracting compressed file: {str(e)}")
 
 async def download_from_url(message, url):
     """
@@ -170,155 +324,3 @@ async def download_from_url(message, url):
             for link, err in failed_downloads:
                 error_report += f"- {link}: {err}\n"
             await message.reply(error_report)
-async def verify_file_size(message):
-    """Verify if the file size is within allowed limits"""
-    try:
-        if hasattr(message, 'video'):
-            file_size = message.video.file_size
-        elif hasattr(message, 'document'):
-            file_size = message.document.file_size
-        elif hasattr(message, 'photo'):
-            file_size = message.photo[-1].file_size if isinstance(message.photo, list) else message.photo.file_size
-        else:
-            return True  # If we can't determine size, proceed with caution
-
-        if file_size > MAX_FILE_SIZE:
-            raise DownloadError(f"File size ({file_size} bytes) exceeds maximum allowed size ({MAX_FILE_SIZE} bytes)")
-        return True
-    except Exception as e:
-        logger.error(f"Error verifying file size: {str(e)}")
-        return False
-        
-async def download_with_progress(message, media_type, retry=False, max_retries=MAX_RETRIES, retry_delay=2):
-    """Enhanced download function with better error handling and progress tracking"""
-    global failed_files
-
-    try:
-        # Verify file size before proceeding
-        if not await verify_file_size(message):
-            raise DownloadError("File size verification failed")
-
-        # Determine media and filename based on type with enhanced error handling
-        if media_type == "ảnh":
-            if not hasattr(message, 'photo'):
-                raise ValueError("No photo found in message")
-            media = message.photo[-1] if isinstance(message.photo, list) else message.photo
-            file_name = f"photo_{media.file_unique_id}.jpg"
-        elif media_type == "video":
-            if not hasattr(message, 'video'):
-                raise ValueError("No video found in message")
-            media = message.video
-            # Enhanced video filename handling
-            file_name = getattr(media, 'file_name', None)
-            if not file_name or not file_name.lower().endswith(tuple(SUPPORTED_MEDIA_TYPES['video'])):
-                file_name = f"video_{media.file_unique_id}.mp4"
-        else:
-            if not hasattr(message, 'document'):
-                raise ValueError("No document found in message")
-            media = message.document
-            file_name = getattr(media, 'file_name', None) or f"file_{media.file_unique_id}"
-
-        # Create unique filename with better collision handling
-        base_name, ext = os.path.splitext(file_name)
-        unique_name = f"{base_name}_{uuid.uuid4().hex[:8]}{ext}"
-        file_path = os.path.join(BASE_DOWNLOAD_FOLDER, unique_name)
-
-        async with download_semaphore:
-            status_message = await message.reply(f"Starting download of {media_type}...")
-            start_time = time.time()
-            current_try = 0
-
-            while current_try < max_retries:
-                try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-
-                    # Enhanced download with chunked transfer and timeout handling
-                    download_task = asyncio.create_task(
-                        message.download(
-                            file_name=file_path,
-                            progress=lambda current, total: asyncio.create_task(
-                                progress_callback(current, total, status_message, start_time, media_type)
-                            ),
-                            block=True
-                        )
-                    )
-
-                    try:
-                        await asyncio.wait_for(download_task, timeout=DOWNLOAD_TIMEOUT)
-                    except asyncio.TimeoutError:
-                        raise DownloadError("Download timed out")
-
-                    # Verify downloaded file
-                    if os.path.exists(file_path):
-                        file_size = os.path.getsize(file_path)
-                        if file_size == 0:
-                            raise DownloadError("Downloaded file is empty")
-
-                        # Log successful download
-                        logger.info(f"Successfully downloaded {media_type}: {unique_name} ({file_size} bytes)")
-
-                        await status_message.edit_text(
-                            f"✅ {media_type.capitalize()} downloaded successfully!\n"
-                            f"File: {unique_name}\n"
-                            f"Size: {file_size} bytes"
-                        )
-
-                        # Remove from failed_files if this was a retry
-                        if retry:
-                            failed_files = [f for f in failed_files if f["file_path"] != file_path]
-
-                        # Handle compressed files
-                        if file_path.lower().endswith(tuple(SUPPORTED_MEDIA_TYPES['compressed'])):
-                            await extract_compressed_file(message, file_path)
-
-                        return True
-
-                except errors.FloodWait as e:
-                    await handle_flood_wait(e, message)
-                    current_try += 1
-                except Exception as e:
-                    logger.error(f"Download error (attempt {current_try + 1}/{max_retries}): {str(e)}")
-                    current_try += 1
-                    if current_try < max_retries:
-                        await asyncio.sleep(retry_delay * (current_try + 1))  # Exponential backoff
-                    else:
-                        raise e
-
-            raise DownloadError("Exceeded maximum retry attempts")
-
-    except Exception as e:
-        error_msg = f"❌ Error downloading {media_type}: {str(e)}"
-        logger.error(error_msg)
-        if not retry:
-            failed_files.append({
-                "file_path": file_path,
-                "message": message,
-                "media_type": media_type,
-                "error": str(e)
-            })
-        try:
-            await status_message.edit_text(f"{error_msg}\nUse /retry_download to attempt manual re-download.")
-        except Exception as edit_error:
-            logger.error(f"Error updating status message: {str(edit_error)}")
-
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        return False
-
-async def extract_compressed_file(message, file_path):
-    """Separate function for handling compressed file extraction"""
-    try:
-        if file_path.lower().endswith('.zip'):
-            with zipfile.ZipFile(file_path, "r") as zip_ref:
-                if len(zip_ref.namelist()) == 0:
-                    raise DownloadError("The zip file is empty")
-                zip_ref.extractall(EXTRACT_FOLDER)
-        else:
-            patoolib.extract_archive(file_path, outdir=EXTRACT_FOLDER)
-
-        logger.info(f"Successfully extracted: {file_path} to {EXTRACT_FOLDER}")
-        await message.reply(f"✅ Compressed file extracted into {EXTRACT_FOLDER}")
-    except Exception as e:
-        logger.error(f"Extraction error for {file_path}: {str(e)}")
-        await message.reply(f"❌ Error extracting compressed file: {str(e)}")
