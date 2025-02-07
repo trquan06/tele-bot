@@ -12,28 +12,12 @@ from progress import progress_callback
 from flood_control import handle_flood_wait
 from pyrogram import Client
 import patoolib
-import tempfile
-import msvcrt  # Windows-specific file locking
 
 # Semaphore to limit concurrent downloads
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
 # Global list for tracking failed downloads
 failed_files = []
-
-def windows_file_lock(file):
-    """Windows-compatible file locking"""
-    try:
-        msvcrt.locking(file.fileno(), msvcrt.LK_NBLCK, 1)
-    except:
-        pass
-
-def windows_file_unlock(file):
-    """Windows-compatible file unlocking"""
-    try:
-        msvcrt.locking(file.fileno(), msvcrt.LK_UNLCK, 1)
-    except:
-        pass
 
 async def download_from_url(message, url):
     """
@@ -126,31 +110,26 @@ async def download_from_url(message, url):
                 downloaded_size = 0
                 start_time = time.time()
                 status_msg = await message.reply("Starting file download...")
-
-                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                    temp_file_path = temp_file.name
-                    with open(temp_file_path, "wb") as f:
-                        windows_file_lock(f)
-                        async for chunk in response.content.iter_chunked(CHUNK_SIZE):
-                            if chunk:
-                                f.write(chunk)
-                                downloaded_size += len(chunk)
-                                current_time = time.time()
-                                if total_size > 0 and (downloaded_size / total_size * 100 % 5 == 0 or current_time - start_time >= 3):
-                                    progress = (downloaded_size / total_size * 100)
-                                    speed = downloaded_size / (current_time - start_time)
-                                    await status_msg.edit_text(
-                                        f"Downloading file: {progress:.1f}%\nSpeed: {speed:.1f} bytes/s\nDownloaded: {downloaded_size} MB"
-                                    )
-                        windows_file_unlock(f)
-                    os.replace(temp_file_path, file_path)  # Using os.replace instead of rename for atomic operation
-                    await status_msg.edit_text(f"✅ Downloaded file from URL: {url}\nSaved at: {file_path}")
-
+                with open(file_path, "wb") as f:
+                    async for chunk in response.content.iter_chunked(CHUNK_SIZE):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded_size += len(chunk)
+                            current_time = time.time()
+                            # Update progress every few seconds or on completion
+                            if total_size > 0 and (downloaded_size / total_size * 100 % 5 == 0 or current_time - start_time >= 3):
+                                progress = (downloaded_size / total_size * 100)
+                                speed = downloaded_size / (current_time - start_time)
+                                await status_msg.edit_text(
+                                    f"Downloading file: {progress:.1f}%\nSpeed: {speed:.1f} bytes/s\nDownloaded: {downloaded_size} MB"
+                                )
+                await status_msg.edit_text(f"✅ Downloaded file from URL: {url}\nSaved at: {file_path}")
+                
                 # Verify file integrity
                 if downloaded_size != total_size:
                     raise ValueError(f"Incomplete download: expected {total_size} bytes, got {downloaded_size} bytes")
 
-                # Extract compressed files
+                # --- NEW: If file is a compressed file, extract its contents ---
                 if file_path.lower().endswith(('.zip', '.rar', '.tar', '.gz', '.7z')):
                     try:
                         if file_path.lower().endswith(".zip"):
@@ -178,9 +157,9 @@ async def download_from_url(message, url):
             await message.reply(error_report)
 
 async def download_with_progress(message, media_type, retry=False, max_retries=MAX_RETRIES, retry_delay=2):
-    global failed_files
-    file_path = ""  # Initialize file_path with a default value
+    global failed_files  # Declare at the very start of the function
     try:
+        from config import BASE_DOWNLOAD_FOLDER  # import here to avoid circular imports
         # Determine media and filename based on type
         if media_type == "ảnh":
             if not hasattr(message, 'photo'):
@@ -198,7 +177,8 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
             media = message.document
             file_name = getattr(media, 'file_name', None) or f"file_{media.file_unique_id}"
 
-        # Create a unique filename
+        # Create a unique filename to avoid overwriting
+        import os, uuid
         base_name, ext = os.path.splitext(file_name)
         unique_name = f"{base_name}_{uuid.uuid4().hex[:8]}{ext}"
         file_path = os.path.join(BASE_DOWNLOAD_FOLDER, unique_name)
@@ -212,32 +192,26 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                 try:
                     if os.path.exists(file_path):
                         os.remove(file_path)
-                    
-                    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                        temp_file_path = temp_file.name
-                        with open(temp_file_path, "wb") as f:
-                            windows_file_lock(f)
-                            try:
-                                await message.download(
-                                    file_name=temp_file_path,
-                                    progress=lambda current, total: asyncio.create_task(
-                                        progress_callback(current, total, status_message, start_time, media_type)
-                                    ),
-                                    block=True
-                                )
-                            finally:
-                                windows_file_unlock(f)  # Ensure file is unlocked even if an error occurs
-                        os.replace(temp_file_path, file_path)  # Using os.replace for atomic operation
-
+                    # Wrap download_media call to catch socket.send exceptions
+                    await message.download(
+                        file_name=file_path,
+                        progress=lambda current, total: asyncio.create_task(
+                            progress_callback(current, total, status_message, start_time, media_type)
+                        ),
+                        block=True
+                    )
+                    # Verify download
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                         await status_message.edit_text(
                             f"✅ {media_type.capitalize()} downloaded successfully!\n"
                             f"File: {unique_name}\n"
                             f"Size: {os.path.getsize(file_path)} bytes"
                         )
+                        # Remove from failed_files if this was a retry
                         if retry:
                             failed_files = [f for f in failed_files if f["file_path"] != file_path]
                         
+                        # --- NEW: If file is a compressed file, extract its contents ---
                         if file_path.lower().endswith(('.zip', '.rar', '.tar', '.gz', '.7z')):
                             try:
                                 if file_path.lower().endswith(".zip"):
