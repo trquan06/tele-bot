@@ -9,8 +9,6 @@ BOT_TOKEN = "7878223314:AAGdrEWvu86sVWXCHIDFqqZw6m68mK6q5pY"
 # Download configuration
 BASE_DOWNLOAD_FOLDER = os.path.join(os.path.expanduser("~"), "Downloads")
 CHUNK_SIZE = 1024 * 1024 * 10  # 10 MB chunks for faster downloads
-DOWNLOAD_TIMEOUT = 3600  # 1 hour timeout
-CONNECT_TIMEOUT = 30    # 30 seconds for connection timeout
 MAX_RETRIES = 5  # Retry attempts for large file downloads
 EXTRACT_FOLDER = os.path.join(BASE_DOWNLOAD_FOLDER, "extracted")  # Folder for extracted files
 MAX_FILE_SIZE = 1024 * 1024 * 1024 * 10  # 10GB maximum file size for downloads
