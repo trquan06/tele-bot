@@ -204,4 +204,17 @@ async def delete_command(client, message):
 # Handler for forwarded messages with media
 @app.on_message(filters.forwarded & (filters.photo | filters.video | filters.document))
 async def handle_forwarded_message(client, message):
-    await handle_forwarded_message(client, message)
+        await process_forwarded_message(client, message)
+
+async def process_forwarded_message(client, message):
+    try:
+        media_info = get_media_type(message)
+        if not media_info:
+            await message.reply("No valid media found in forwarded message.")
+            return
+
+        await download_with_progress(message, media_info.type)
+    except errors.FloodWait as e:
+        await handle_flood_wait(e, message)
+    except Exception as e:
+        await message.reply(f"Error processing forwarded message: {str(e)}")
