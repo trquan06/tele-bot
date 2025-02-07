@@ -6,7 +6,7 @@ from system_monitor import get_system_stats
 from download import download_from_url, download_with_progress, failed_files
 from upload import upload_to_google_photos, retry_upload_command
 from flood_control import handle_flood_wait, check_flood_wait_status
-
+from media_type_detection import get_media_type
 # Global state flags
 downloading = False
 uploading = False
