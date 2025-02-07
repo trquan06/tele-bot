@@ -61,26 +61,7 @@ async def status_command(client, message):
         )
     except Exception as e:
         await message.reply(f"Error retrieving system status: {str(e)}")
-        
-@app.on_message(filters.forwarded & (filters.photo | filters.video | filters.document))
-async def handle_forwarded_message(client, message):
-    global downloading
-    try:
-        if not downloading:
-            await message.reply("Download mode is not activated. Use /download to start.")
-            return
 
-        media_info = get_media_type(message)
-        if not media_info:
-            await message.reply("No valid media found in message")
-            return
-
-        await download_with_progress(message, media_info.type)
-
-    except errors.FloodWait as e:
-        await handle_flood_wait(e, message)
-    except Exception as e:
-        await message.reply(f"Error processing forwarded message: {str(e)}")
 # /download command handler
 @app.on_message(filters.command("download"))
 async def download_command(client, message):
@@ -206,21 +187,20 @@ async def handle_forwarded_message(client, message):
             await message.reply("Download mode is not activated. Use /download to start.")
             return
 
-        tasks = []
-        if message.photo:
-            tasks.append(download_with_progress(message, "ảnh"))
-        elif message.video:
-            tasks.append(download_with_progress(message, "video"))
-        elif message.document:
-            tasks.append(download_with_progress(message, "file"))
+        media_info = get_media_type(message)
+        if not media_info:
+            await message.reply("No valid media found in this message. Please forward a message containing photo, video, or document.")
+            return
 
-        if tasks:
-            await asyncio.gather(*tasks)
+        try:
+            await download_with_progress(message, media_info.type)
+        except Exception as download_error:
+            await message.reply(f"Download error: {str(download_error)}")
 
-    except errors.FloodWait as e:
-        await handle_flood_wait(e, message)
+    except ImportError:
+        await message.reply("System error: Media type detection module not found. Please contact the administrator.")
     except Exception as e:
-        await message.reply(f"Error processing forwarded message: {str(e)}")
+        await message.reply(f"Error processing message: {str(e)}\nType: {type(e).__name__}")
 
 # /delete command handler
 @app.on_message(filters.command("delete"))
