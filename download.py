@@ -12,7 +12,7 @@ from progress import progress_callback
 from flood_control import handle_flood_wait
 from pyrogram import Client
 import patoolib
-
+from media_type_detection import get_media_type, MediaInfo
 # Semaphore to limit concurrent downloads
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
@@ -157,74 +157,76 @@ async def download_from_url(message, url):
             await message.reply(error_report)
 
 async def download_with_progress(message, media_type, retry=False, max_retries=MAX_RETRIES):
-    """Enhanced download function with better error handling and progress tracking"""
+    """Enhanced download function with better media type detection"""
     global failed_files
-    
+
     try:
-        # Verify file size before proceeding
+        # Get media info using new detection logic
+        media_info = get_media_type(message)
+        if not media_info:
+            raise ValueError(f"Không tìm thấy media hợp lệ trong tin nhắn")
+
+        # Verify file size
         if not await verify_file_size(message):
             raise DownloadError("File size verification failed")
 
-        # Xác định loại media và filename
-        if media_type == "video":
-            if not hasattr(message, 'video'):
-                raise ValueError("No video found in message")
-            media = message.video
-            # Giữ nguyên tên file gốc nếu có
-            original_name = getattr(media, 'file_name', None)
-            file_name = original_name if original_name else f"video_{uuid.uuid4().hex[:8]}.mp4"
-            
-        elif media_type == "ảnh":
-            if not hasattr(message, 'photo'):
-                raise ValueError("No photo found in message")
-            media = message.photo[-1] if isinstance(message.photo, list) else message.photo
-            file_name = f"photo_{uuid.uuid4().hex[:8]}.jpg"
-        else:
-            raise ValueError(f"Unsupported media type: {media_type}")
+        # Use detected media info
+        file_path = os.path.join(
+            BASE_DOWNLOAD_FOLDER,
+            f"{os.path.splitext(media_info.file_name)[0]}_{uuid.uuid4().hex[:8]}{os.path.splitext(media_info.file_name)[1]}"
+        )
 
-        file_path = os.path.join(BASE_DOWNLOAD_FOLDER, file_name)
-        
-        # Create status message
-        status_message = await message.reply(f"Starting download of {media_type}...")
-        start_time = time.time()
-        
         async with download_semaphore:
-            # Download with chunked transfer
-            download_task = asyncio.create_task(
-                message.download(
-                    file_name=file_path,
-                    progress=lambda current, total: asyncio.create_task(
-                        progress_callback(current, total, status_message, start_time, media_type)
-                    ),
-                    block=True
-                )
+            status_message = await message.reply(
+                f"Bắt đầu tải {media_info.type}...\n"
+                f"Tên file: {media_info.file_name}\n"
+                f"Kích thước: {media_info.file_size/(1024*1024):.1f} MB"
             )
-            
+            start_time = time.time()
+
             try:
-                # Set timeout for download
+                # Enhanced download with chunked transfer
+                download_task = asyncio.create_task(
+                    message.download(
+                        file_name=file_path,
+                        progress=lambda current, total: asyncio.create_task(
+                            progress_callback(current, total, status_message, start_time, media_info.type)
+                        ),
+                        block=True
+                    )
+                )
+
                 await asyncio.wait_for(download_task, timeout=DOWNLOAD_TIMEOUT)
-                
+
                 # Verify downloaded file
                 if os.path.exists(file_path):
                     file_size = os.path.getsize(file_path)
                     if file_size == 0:
                         raise DownloadError("Downloaded file is empty")
-                        
-                    # Log successful download
-                    logger.info(f"Successfully downloaded {media_type}: {file_name} ({file_size} bytes)")
-                    
+
+                    # Update status message with success
                     await status_message.edit_text(
-                        f"✅ {media_type.capitalize()} downloaded successfully!\n"
-                        f"📁 File: {file_name}\n"
-                        f"📊 Size: {file_size/(1024*1024):.1f} MB"
+                        f"✅ {media_info.type.capitalize()} tải xuống thành công!\n"
+                        f"📁 File: {os.path.basename(file_path)}\n"
+                        f"📊 Kích thước: {file_size/(1024*1024):.1f} MB"
                     )
+
+                    # Remove from failed_files if this was a retry
+                    if retry:
+                        failed_files = [f for f in failed_files if f["file_path"] != file_path]
+
                     return True
-                    
+
             except asyncio.TimeoutError:
                 raise DownloadError("Download timed out")
-                
+            except errors.FloodWait as e:
+                await handle_flood_wait(e, message)
+                raise
+            except Exception as e:
+                raise DownloadError(f"Download error: {str(e)}")
+
     except Exception as e:
-        error_msg = f"❌ Error downloading {media_type}: {str(e)}"
+        error_msg = f"❌ Lỗi khi tải {media_type}: {str(e)}"
         logger.error(error_msg)
         
         if not retry:
@@ -235,18 +237,18 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                 "error": str(e)
             })
             
-        await message.reply(
-            f"{error_msg}\n"
-            "Use /retry_download to attempt manual re-download.",
-            quote=True
-        )
-        
-        # Clean up failed download
-        if os.path.exists(file_path):
+        try:
+            await status_message.edit_text(
+                f"{error_msg}\n"
+                "Sử dụng /retry_download để thử tải lại."
+            )
+        except Exception as edit_error:
+            logger.error(f"Error updating status message: {str(edit_error)}")
+
+        if 'file_path' in locals() and os.path.exists(file_path):
             os.remove(file_path)
             
         return False
-
         # Create a unique filename to avoid overwriting
         import os, uuid
         base_name, ext = os.path.splitext(file_name)
