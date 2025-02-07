@@ -14,6 +14,7 @@ def get_media_type(message) -> Optional[MediaInfo]:
     Returns MediaInfo object with type details
     """
     try:
+        # Check for video
         if message.video:
             return MediaInfo(
                 type="video",
@@ -21,6 +22,7 @@ def get_media_type(message) -> Optional[MediaInfo]:
                 file_size=message.video.file_size,
                 mime_type=message.video.mime_type
             )
+        # Check for photo
         elif message.photo:
             # Get largest photo size
             photo = message.photo[-1]
@@ -30,12 +32,16 @@ def get_media_type(message) -> Optional[MediaInfo]:
                 file_size=photo.file_size,
                 mime_type="image/jpeg"
             )
+        # Check for document
         elif message.document:
+            mime_type = message.document.mime_type
+            # Determine type based on mime_type
+            doc_type = "video" if mime_type and "video" in mime_type else "document"
             return MediaInfo(
-                type="document",
+                type=doc_type,
                 file_name=message.document.file_name if message.document.file_name else f"doc_{message.document.file_id}",
                 file_size=message.document.file_size,
-                mime_type=message.document.mime_type
+                mime_type=mime_type
             )
         return None
     except Exception as e:
