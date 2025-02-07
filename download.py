@@ -12,6 +12,7 @@ from progress import progress_callback
 from flood_control import handle_flood_wait
 from pyrogram import Client
 import patoolib
+from media_type_detection import get_media_type, MediaInfo
 
 # Semaphore to limit concurrent downloads
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
@@ -156,27 +157,23 @@ async def download_from_url(message, url):
                 error_report += f"- {link}: {err}\n"
             await message.reply(error_report)
 
-async def download_with_progress(message, media_type, retry=False, max_retries=MAX_RETRIES, retry_delay=2):
-    global failed_files  # Declare at the very start of the function
+async def download_with_progress(message, media_type, retry=False, max_retries=MAX_RETRIES):
+    """Enhanced download function with better media type detection"""
     try:
-        from config import BASE_DOWNLOAD_FOLDER  # import here to avoid circular imports
-        # Determine media and filename based on type
-        if media_type == "ảnh":
-            if not hasattr(message, 'photo'):
-                raise ValueError("No photo found in message.")
-            media = message.photo[-1] if isinstance(message.photo, list) else message.photo
-            file_name = f"photo_{media.file_unique_id}.jpg"
-        elif media_type == "video":
-            if not hasattr(message, 'video'):
-                raise ValueError("No video found in message.")
-            media = message.video
-            file_name = getattr(media, 'file_name', None) or f"video_{media.file_unique_id}.mp4"
-        else:
-            if not hasattr(message, 'document'):
-                raise ValueError("No document found in message.")
-            media = message.document
-            file_name = getattr(media, 'file_name', None) or f"file_{media.file_unique_id}"
+        # Get media info using new detection logic
+        media_info = get_media_type(message)
+        if not media_info:
+            raise ValueError(f"No valid media found in message")
 
+        # Verify file size
+        if not await verify_file_size(message):
+            raise DownloadError("File size verification failed")
+
+        # Use detected media info
+        file_path = os.path.join(
+            BASE_DOWNLOAD_FOLDER,
+            f"{os.path.splitext(media_info.file_name)[0]}_{uuid.uuid4().hex[:8]}{os.path.splitext(media_info.file_name)[1]}"
+        )
         # Create a unique filename to avoid overwriting
         import os, uuid
         base_name, ext = os.path.splitext(file_name)
