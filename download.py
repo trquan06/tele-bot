@@ -5,6 +5,7 @@ import mimetypes
 import asyncio
 import aiohttp
 import zipfile
+import logging
 from bs4 import BeautifulSoup
 from pyrogram import errors
 from config import BASE_DOWNLOAD_FOLDER, CHUNK_SIZE, SUPPORTED_MEDIA_TYPES, MAX_CONCURRENT_DOWNLOADS, MAX_RETRIES, EXTRACT_FOLDER, MAX_FILE_SIZE
@@ -13,11 +14,39 @@ from flood_control import handle_flood_wait
 from pyrogram import Client
 import patoolib
 from media_type_detection import get_media_type, MediaInfo
+
+# Set up logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.FileHandler(os.path.join(BASE_DOWNLOAD_FOLDER, 'download_log.txt'))
+handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(handler)
+
+# Timeout settings
+DOWNLOAD_TIMEOUT = 3600  # 1 hour
+CONNECT_TIMEOUT = 30    # 30 seconds
+
+# Custom Exception
+class DownloadError(Exception):
+    """Custom exception for download-related errors"""
+    pass
+
 # Semaphore to limit concurrent downloads
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
 # Global list for tracking failed downloads
 failed_files = []
+
+async def verify_file_size(message):
+    """Verify if the file size is within allowed limits"""
+    try:
+        media_info = get_media_type(message)
+        if media_info and media_info.file_size > MAX_FILE_SIZE:
+            raise DownloadError(f"File size ({media_info.file_size/(1024*1024):.1f}MB) exceeds maximum allowed size ({MAX_FILE_SIZE/(1024*1024)}MB)")
+        return True
+    except Exception as e:
+        logger.error(f"Error verifying file size: {str(e)}")
+        return False
 
 async def download_from_url(message, url):
     """
@@ -166,11 +195,11 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
         if not media_info:
             raise ValueError(f"Không tìm thấy media hợp lệ trong tin nhắn")
 
-        # Verify file size
+        # Verify file size before proceeding
         if not await verify_file_size(message):
             raise DownloadError("File size verification failed")
 
-        # Use detected media info
+        # Use detected media info for file path
         file_path = os.path.join(
             BASE_DOWNLOAD_FOLDER,
             f"{os.path.splitext(media_info.file_name)[0]}_{uuid.uuid4().hex[:8]}{os.path.splitext(media_info.file_name)[1]}"
@@ -204,6 +233,9 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                     if file_size == 0:
                         raise DownloadError("Downloaded file is empty")
 
+                    # Log successful download
+                    logger.info(f"Successfully downloaded {media_info.type}: {media_info.file_name} ({file_size} bytes)")
+
                     # Update status message with success
                     await status_message.edit_text(
                         f"✅ {media_info.type.capitalize()} tải xuống thành công!\n"
@@ -214,6 +246,10 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                     # Remove from failed_files if this was a retry
                     if retry:
                         failed_files = [f for f in failed_files if f["file_path"] != file_path]
+
+                    # Handle compressed files
+                    if file_path.lower().endswith(tuple(SUPPORTED_MEDIA_TYPES['compressed'])):
+                        await extract_compressed_file(message, file_path)
 
                     return True
 
@@ -249,94 +285,20 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
             os.remove(file_path)
             
         return False
-        # Create a unique filename to avoid overwriting
-        import os, uuid
-        base_name, ext = os.path.splitext(file_name)
-        unique_name = f"{base_name}_{uuid.uuid4().hex[:8]}{ext}"
-        file_path = os.path.join(BASE_DOWNLOAD_FOLDER, unique_name)
 
-        async with download_semaphore:
-            status_message = await message.reply(f"Starting download of {media_type}...")
-            start_time = time.time()
-            current_try = 0
+async def extract_compressed_file(message, file_path):
+    """Handle compressed file extraction"""
+    try:
+        if file_path.lower().endswith('.zip'):
+            with zipfile.ZipFile(file_path, "r") as zip_ref:
+                if len(zip_ref.namelist()) == 0:
+                    raise DownloadError("The zip file is empty")
+                zip_ref.extractall(EXTRACT_FOLDER)
+        else:
+            patoolib.extract_archive(file_path, outdir=EXTRACT_FOLDER)
 
-            while current_try < max_retries:
-                try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                    # Wrap download_media call to catch socket.send exceptions
-                    await message.download(
-                        file_name=file_path,
-                        progress=lambda current, total: asyncio.create_task(
-                            progress_callback(current, total, status_message, start_time, media_type)
-                        ),
-                        block=True
-                    )
-                    # Verify download
-                    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                        await status_message.edit_text(
-                            f"✅ {media_type.capitalize()} downloaded successfully!\n"
-                            f"File: {unique_name}\n"
-                            f"Size: {os.path.getsize(file_path)} bytes"
-                        )
-                        # Remove from failed_files if this was a retry
-                        if retry:
-                            failed_files = [f for f in failed_files if f["file_path"] != file_path]
-                        
-                        # --- NEW: If file is a compressed file, extract its contents ---
-                        if file_path.lower().endswith(('.zip', '.rar', '.tar', '.gz', '.7z')):
-                            try:
-                                if file_path.lower().endswith(".zip"):
-                                    with zipfile.ZipFile(file_path, "r") as zip_ref:
-                                        if len(zip_ref.namelist()) == 0:
-                                            await message.reply(f"❌ The .zip file is empty: {file_path}")
-                                        else:
-                                            zip_ref.extractall(EXTRACT_FOLDER)
-                                else:
-                                    patoolib.extract_archive(file_path, outdir=EXTRACT_FOLDER)
-                                await message.reply(f"✅ Compressed file extracted into {EXTRACT_FOLDER}")
-                            except Exception as extract_err:
-                                await message.reply(f"❌ Error extracting compressed file: {extract_err}")
-
-                        return True
-                    raise ValueError("Downloaded file is invalid.")
-
-                except errors.FloodWait as e:
-                    await handle_flood_wait(e, message)
-                    current_try += 1
-                    if current_try < max_retries:
-                        await status_message.edit_text(
-                            f"FloodWait encountered. Retrying {current_try + 1}/{max_retries}..."
-                        )
-                        await asyncio.sleep(retry_delay)
-                except Exception as e:
-                    current_try += 1
-                    if current_try < max_retries:
-                        await status_message.edit_text(
-                            f"Error: {str(e)}\nRetrying {current_try + 1}/{max_retries}..."
-                        )
-                        await asyncio.sleep(retry_delay)
-                    else:
-                        raise e
-
-            raise Exception("Exceeded maximum retry attempts.")
-
+        logger.info(f"Successfully extracted: {file_path} to {EXTRACT_FOLDER}")
+        await message.reply(f"✅ Đã giải nén file vào thư mục {EXTRACT_FOLDER}")
     except Exception as e:
-        error_msg = f"❌ Error downloading {media_type}: {str(e)}"
-        print("Download error:", error_msg)
-        if not retry:
-            failed_files.append({
-                "file_path": file_path,
-                "message": message,
-                "media_type": media_type,
-                "error": str(e)
-            })
-        try:
-            await status_message.edit_text(
-                f"{error_msg}\nUse /retry_download to attempt manual re-download."
-            )
-        except Exception:
-            pass
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        return False
+        logger.error(f"Extraction error for {file_path}: {str(e)}")
+        await message.reply(f"❌ Lỗi khi giải nén file: {str(e)}")
