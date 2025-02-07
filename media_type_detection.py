@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
+from datetime import datetime
 
 @dataclass
 class MediaInfo:
@@ -14,18 +15,13 @@ class MediaInfo:
 def get_media_type(message) -> Optional[MediaInfo]:
     """
     Detects the type of media in a message and returns relevant information
-    
-    Args:
-        message: The Pyrogram message object containing media
-        
-    Returns:
-        MediaInfo object containing media details or None if no valid media found
     """
     try:
+        # Handle photo
         if message.photo:
-            # Get the largest photo size
             photo = message.photo
-            file_name = f"photo_{message.date}.jpg"
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            file_name = f"photo_{timestamp}.jpg"
             return MediaInfo(
                 type="photo",
                 file_name=file_name,
@@ -34,10 +30,11 @@ def get_media_type(message) -> Optional[MediaInfo]:
                 width=photo.width,
                 height=photo.height
             )
-            
+        
+        # Handle video
         elif message.video:
             video = message.video
-            file_name = video.file_name or f"video_{message.date}.mp4"
+            file_name = video.file_name or f"video_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.mp4"
             return MediaInfo(
                 type="video",
                 file_name=file_name,
@@ -46,33 +43,20 @@ def get_media_type(message) -> Optional[MediaInfo]:
                 width=video.width,
                 height=video.height
             )
-            
+        
+        # Handle document
         elif message.document:
             doc = message.document
-            file_name = doc.file_name or f"document_{message.date}"
+            file_name = doc.file_name or f"document_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
             return MediaInfo(
                 type="document",
                 file_name=file_name,
                 file_size=doc.file_size,
                 mime_type=doc.mime_type
             )
-            
-        elif message.animation:
-            anim = message.animation
-            file_name = anim.file_name or f"animation_{message.date}.gif"
-            return MediaInfo(
-                type="animation",
-                file_name=file_name,
-                file_size=anim.file_size,
-                mime_type=anim.mime_type,
-                width=anim.width,
-                height=anim.height
-            )
-            
-        # Add other media types as needed
-        
+
         return None
-            
+
     except Exception as e:
         print(f"Error in get_media_type: {str(e)}")
         return None
