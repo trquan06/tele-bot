@@ -64,5 +64,40 @@ async def handle_message(client, message):
     except Exception as e:
         await message.reply(f"Có lỗi xảy ra khi xử lý tin nhắn: {str(e)}")
 
+# Xử lý tin nhắn được chuyển tiếp để tải xuống media
+@app.on_message(filters.forwarded & (filters.photo | filters.video | filters.document))
+async def handle_forwarded_message(client, message):
+    try:
+        tasks = []
+        # Nếu tin nhắn có ảnh
+        if message.photo:
+            print("Processing forwarded photo...")
+            tasks.append(download_with_progress(message, "ảnh"))
+        # Nếu tin nhắn có video
+        elif message.video:
+            print("Processing forwarded video...")
+            tasks.append(download_with_progress(message, "video"))
+        # Nếu tin nhắn có file (document)
+        elif message.document:
+            # Kiểm tra định dạng file có thuộc SUPPORTED_MEDIA_TYPES không
+            file_ext = os.path.splitext(message.document.file_name)[1].lower()
+            allowed_exts = sum(SUPPORTED_MEDIA_TYPES.values(), [])
+            if file_ext in allowed_exts:
+                print("Processing forwarded document...")
+                tasks.append(download_with_progress(message, "file"))
+            else:
+                await message.reply(f"Định dạng file {file_ext} không được hỗ trợ.")
+        else:
+            # Nếu tin nhắn không chứa media, thông báo
+            await message.reply("Tin nhắn được chuyển tiếp này không chứa ảnh, video, hoặc document hợp lệ.")
+
+        if tasks:
+            # Chạy song song các tác vụ tải xuống nếu có
+            await asyncio.gather(*tasks)
+
+    except errors.FloodWait as e:
+        await handle_flood_wait(e, message)
+    except Exception as e:
+        await message.reply(f"Có lỗi xảy ra khi xử lý tin nhắn được chuyển tiếp: {str(e)}")
 
 
