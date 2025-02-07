@@ -55,7 +55,7 @@ async def download_from_url(message, url):
                         status_msg = await message.reply(f"Downloading {total_files} files from Telegra.ph...")
                         for idx, media_url in enumerate(media_links, 1):
                             try:
-                                if media_url.startswith("/"):
+                                if (media_url.startswith("/")):
                                     media_url = f"https://telegra.ph{media_url}"
                                 await download_from_url(message, media_url)
                                 if idx % 5 == 0:
@@ -262,4 +262,24 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
             
+        return False
+
+async def verify_file_size(message):
+    """
+    Verifies the file size of the media in the message.
+    Returns True if the file size is within the allowed limit, False otherwise.
+    """
+    try:
+        media_info = get_media_type(message)
+        if not media_info:
+            raise ValueError("No valid media found in message")
+
+        if media_info.file_size > MAX_FILE_SIZE:
+            await message.reply(f"❌ File size exceeds the maximum allowed limit of {MAX_FILE_SIZE/(1024*1024*1024):.1f} GB.")
+            return False
+
+        return True
+
+    except Exception as e:
+        await message.reply(f"Error verifying file size: {str(e)}")
         return False
