@@ -9,11 +9,8 @@ import logging
 from bs4 import BeautifulSoup
 from pyrogram import errors
 from config import BASE_DOWNLOAD_FOLDER, CHUNK_SIZE, SUPPORTED_MEDIA_TYPES, MAX_CONCURRENT_DOWNLOADS, MAX_RETRIES, EXTRACT_FOLDER, MAX_FILE_SIZE
-from progress import progress_callback
 from flood_control import handle_flood_wait
 from pyrogram import Client
-import patoolib
-from media_type_detection import get_media_type, MediaInfo
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -22,19 +19,18 @@ handler = logging.FileHandler(os.path.join(BASE_DOWNLOAD_FOLDER, 'download_log.t
 handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(handler)
 
-# Timeout settings
+# Constants
 DOWNLOAD_TIMEOUT = 3600  # 1 hour
 CONNECT_TIMEOUT = 30    # 30 seconds
 
-# Custom Exception
+# Custom Exceptions
 class DownloadError(Exception):
-    """Custom exception for download-related errors"""
     pass
 
-# Semaphore to limit concurrent downloads
+# Semaphore for concurrent downloads
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
-# Global list for tracking failed downloads
+# Global list for failed downloads
 failed_files = []
 
 async def verify_file_size(message):
@@ -47,7 +43,49 @@ async def verify_file_size(message):
     except Exception as e:
         logger.error(f"Error verifying file size: {str(e)}")
         return False
+async def progress_callback(current, total, status_message, start_time, media_type):
+    """Improved progress callback with better handling"""
+    try:
+        if total is None or total == 0:
+            return
+            
+        now = time.time()
+        elapsed_time = now - start_time
+        if elapsed_time == 0:
+            return
 
+        # Calculate progress metrics
+        percentage = current * 100 / total
+        speed = current / elapsed_time
+        estimated_total_time = elapsed_time * (total / current if current > 0 else 0)
+        eta = estimated_total_time - elapsed_time
+
+        # Format sizes
+        def format_size(size):
+            for unit in ['B', 'KB', 'MB', 'GB']:
+                if size < 1024:
+                    return f"{size:.2f} {unit}"
+                size /= 1024
+            return f"{size:.2f} GB"
+
+        # Update message every 2 seconds or on completion
+        if current == total or (now - status_message.date) >= 2:
+            try:
+                await status_message.edit_text(
+                    f"📥 Đang tải {media_type}...\n"
+                    f"▪️ Đã tải: {format_size(current)}/{format_size(total)}\n"
+                    f"▪️ Tiến độ: {percentage:.1f}%\n"
+                    f"▪️ Tốc độ: {format_size(speed)}/s\n"
+                    f"▪️ Thời gian còn lại: {time.strftime('%M:%S', time.gmtime(eta))}"
+                )
+            except errors.MessageNotModified:
+                pass
+            except Exception as e:
+                logger.error(f"Error updating progress message: {str(e)}")
+                
+    except Exception as e:
+        logger.error(f"Error in progress callback: {str(e)}")
+        
 async def download_from_url(message, url):
     """
     Downloads content from a URL. Supports:
@@ -186,86 +224,88 @@ async def download_from_url(message, url):
             await message.reply(error_report)
 
 async def download_with_progress(message, media_type, retry=False, max_retries=MAX_RETRIES):
-    """Enhanced download function with better media type detection"""
+    """Enhanced download function with better video handling"""
     global failed_files
+    file_path = None
+    status_message = None
 
     try:
-        # Get media info using new detection logic
-        media_info = get_media_type(message)
-        if not media_info:
-            raise ValueError(f"Không tìm thấy media hợp lệ trong tin nhắn")
+        # Extract video information
+        if not message.video:
+            raise ValueError("Không tìm thấy video trong tin nhắn")
 
-        # Verify file size before proceeding
-        if not await verify_file_size(message):
-            raise DownloadError("File size verification failed")
+        video = message.video
+        original_name = getattr(video, 'file_name', None)
+        file_name = original_name if original_name else f"video_{video.file_unique_id}.mp4"
+        
+        # Verify file size
+        if video.file_size > MAX_FILE_SIZE:
+            raise DownloadError(f"Kích thước video ({video.file_size/(1024*1024):.1f}MB) vượt quá giới hạn cho phép ({MAX_FILE_SIZE/(1024*1024)}MB)")
 
-        # Use detected media info for file path
-        file_path = os.path.join(
-            BASE_DOWNLOAD_FOLDER,
-            f"{os.path.splitext(media_info.file_name)[0]}_{uuid.uuid4().hex[:8]}{os.path.splitext(media_info.file_name)[1]}"
-        )
+        # Create unique filename
+        base_name, ext = os.path.splitext(file_name)
+        unique_name = f"{base_name}_{uuid.uuid4().hex[:8]}{ext}"
+        file_path = os.path.join(BASE_DOWNLOAD_FOLDER, unique_name)
 
         async with download_semaphore:
+            # Create initial status message
             status_message = await message.reply(
-                f"Bắt đầu tải {media_info.type}...\n"
-                f"Tên file: {media_info.file_name}\n"
-                f"Kích thước: {media_info.file_size/(1024*1024):.1f} MB"
+                f"🎥 Bắt đầu tải video...\n"
+                f"📁 Tên file: {file_name}\n"
+                f"📏 Kích thước: {video.file_size/(1024*1024):.1f}MB\n"
+                f"🎞️ Độ phân giải: {video.width}x{video.height}\n"
+                f"⏱️ Thời lượng: {video.duration}s"
             )
             start_time = time.time()
 
             try:
-                # Enhanced download with chunked transfer
+                # Download with progress tracking
                 download_task = asyncio.create_task(
                     message.download(
                         file_name=file_path,
-                        progress=lambda current, total: asyncio.create_task(
-                            progress_callback(current, total, status_message, start_time, media_info.type)
-                        ),
-                        block=True
+                        progress=lambda current, total: progress_callback(
+                            current, total, status_message, start_time, "video"
+                        )
                     )
                 )
-
+                
+                # Wait for download with timeout
                 await asyncio.wait_for(download_task, timeout=DOWNLOAD_TIMEOUT)
 
                 # Verify downloaded file
-                if os.path.exists(file_path):
-                    file_size = os.path.getsize(file_path)
-                    if file_size == 0:
-                        raise DownloadError("Downloaded file is empty")
+                if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+                    raise DownloadError("File tải về trống hoặc không tồn tại")
 
-                    # Log successful download
-                    logger.info(f"Successfully downloaded {media_info.type}: {media_info.file_name} ({file_size} bytes)")
+                # Log successful download
+                logger.info(f"Successfully downloaded video: {file_name} ({os.path.getsize(file_path)} bytes)")
 
-                    # Update status message with success
-                    await status_message.edit_text(
-                        f"✅ {media_info.type.capitalize()} tải xuống thành công!\n"
-                        f"📁 File: {os.path.basename(file_path)}\n"
-                        f"📊 Kích thước: {file_size/(1024*1024):.1f} MB"
-                    )
+                # Update status message
+                await status_message.edit_text(
+                    f"✅ Tải video thành công!\n"
+                    f"📁 File: {unique_name}\n"
+                    f"📊 Kích thước: {os.path.getsize(file_path)/(1024*1024):.1f}MB\n"
+                    f"⌛ Thời gian: {time.time() - start_time:.1f}s"
+                )
 
-                    # Remove from failed_files if this was a retry
-                    if retry:
-                        failed_files = [f for f in failed_files if f["file_path"] != file_path]
+                # Remove from failed_files if this was a retry
+                if retry:
+                    failed_files = [f for f in failed_files if f["file_path"] != file_path]
 
-                    # Handle compressed files
-                    if file_path.lower().endswith(tuple(SUPPORTED_MEDIA_TYPES['compressed'])):
-                        await extract_compressed_file(message, file_path)
-
-                    return True
+                return True
 
             except asyncio.TimeoutError:
-                raise DownloadError("Download timed out")
+                raise DownloadError("Quá thời gian tải video")
             except errors.FloodWait as e:
                 await handle_flood_wait(e, message)
                 raise
             except Exception as e:
-                raise DownloadError(f"Download error: {str(e)}")
+                raise DownloadError(f"Lỗi khi tải video: {str(e)}")
 
     except Exception as e:
-        error_msg = f"❌ Lỗi khi tải {media_type}: {str(e)}"
-        logger.error(error_msg)
+        error_msg = f"❌ Lỗi: {str(e)}"
+        logger.error(f"Download error: {error_msg}")
         
-        if not retry:
+        if not retry and file_path:
             failed_files.append({
                 "file_path": file_path,
                 "message": message,
@@ -273,32 +313,16 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                 "error": str(e)
             })
             
-        try:
-            await status_message.edit_text(
-                f"{error_msg}\n"
-                "Sử dụng /retry_download để thử tải lại."
-            )
-        except Exception as edit_error:
-            logger.error(f"Error updating status message: {str(edit_error)}")
+        if status_message:
+            try:
+                await status_message.edit_text(
+                    f"{error_msg}\n"
+                    "Sử dụng /retry_download để thử tải lại."
+                )
+            except Exception as edit_error:
+                logger.error(f"Error updating status message: {str(edit_error)}")
 
-        if 'file_path' in locals() and os.path.exists(file_path):
+        if file_path and os.path.exists(file_path):
             os.remove(file_path)
             
         return False
-
-async def extract_compressed_file(message, file_path):
-    """Handle compressed file extraction"""
-    try:
-        if file_path.lower().endswith('.zip'):
-            with zipfile.ZipFile(file_path, "r") as zip_ref:
-                if len(zip_ref.namelist()) == 0:
-                    raise DownloadError("The zip file is empty")
-                zip_ref.extractall(EXTRACT_FOLDER)
-        else:
-            patoolib.extract_archive(file_path, outdir=EXTRACT_FOLDER)
-
-        logger.info(f"Successfully extracted: {file_path} to {EXTRACT_FOLDER}")
-        await message.reply(f"✅ Đã giải nén file vào thư mục {EXTRACT_FOLDER}")
-    except Exception as e:
-        logger.error(f"Extraction error for {file_path}: {str(e)}")
-        await message.reply(f"❌ Lỗi khi giải nén file: {str(e)}")
