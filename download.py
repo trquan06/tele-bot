@@ -216,6 +216,9 @@ async def download_with_progress(message, media_type, retry=False, max_retries=M
                     file_size = os.path.getsize(file_path)
                     if file_size == 0:
                         raise DownloadError("Downloaded file is empty")
+                    # Add final file size verification
+                    if file_size != media_info.file_size:
+                        raise DownloadError(f"File size mismatch: expected {media_info.file_size} bytes, got {file_size} bytes")
 
                     # Update status message with success
                     await status_message.edit_text(
