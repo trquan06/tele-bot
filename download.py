@@ -165,15 +165,20 @@ async def download_from_url(message, url):
 async def download_with_progress(message, media_type, retry=False, max_retries=MAX_RETRIES):
     """Enhanced download function with better media type detection"""
     global failed_files
-    status_message = None
-    file_path = None
-
+    
     try:
+        # Add debug print to verify the function is being called
+        print("Starting download_with_progress")
+        
         # Get media info using new detection logic
-        media_info = get_media_type(message)
-        if not media_info:
-            raise ValueError(f"No valid media found in message")
-
+        try:
+            media_info = get_media_type(message)
+            if not media_info:
+                raise ValueError(f"No valid media found in message")
+        except Exception as e:
+            print(f"Error in media type detection: {str(e)}")
+            raise
+            
         # Verify file size
         if not await verify_file_size(message):
             raise DownloadError("File size verification failed")
