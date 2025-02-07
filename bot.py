@@ -54,7 +54,7 @@ class TelegramBot:
         self.download_manager = DownloadManager()
         self._setup_handlers()
 
-def _setup_handlers(self):
+    def _setup_handlers(self):
         @dataclass
         class DownloadTask:
             message_id: int
