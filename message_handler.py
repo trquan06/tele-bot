@@ -6,7 +6,7 @@ from pyrogram import Client, filters, errors
 from config import BASE_DOWNLOAD_FOLDER, SUPPORTED_MEDIA_TYPES
 from download import download_from_url, download_with_progress
 from flood_control import handle_flood_wait
-
+from media_type_detection import get_media_type
 
 # Hàm debug (có thể in ra thông tin để kiểm tra tin nhắn)
 def log_message_info(message):
