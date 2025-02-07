@@ -561,8 +561,9 @@ async def handle_html_content(message, url, html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
     media_links = []
 
-    # Handle Telegra.ph
-    if 'telegra.ph' in url:
-        media_links.extend(
-            f"https://telegra.ph{tag['src']}" if tag['src'].startswith('/') else tag['src']
-            for tag in soup.
+# Handle Telegra.ph
+if 'telegra.ph' in url:
+    media_links.extend(
+        f"https://telegra.ph{tag['src']}" if tag['src'].startswith('/') else tag['src']
+        for tag in soup.find_all(['img', 'video'])  # Add the missing part to find media tags
+    )  # Close the parenthesis
