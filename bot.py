@@ -436,7 +436,7 @@ async def upload_to_google_photos_with_retry(source_dir, status_message, max_ret
         'remaining_files': remaining_files
     }
 
-@app.on_message(filters.media & ~filters.command)
+@app.on_message(filters.media & filters.command("") == False)
 @authorized_users_only
 async def handle_media_message(client, message):
     async with download_manager.download_lock:
